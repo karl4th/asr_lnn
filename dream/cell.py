@@ -357,17 +357,19 @@ class DREAMCell(nn.Module):
         # ================================================================
         # Dynamic Prediction
         # ================================================================
-        # Fast weights modulate prediction: x_pred = tanh((C + V @ U.T) @ h)
-        # Using einsum for efficient batch computation
+        # Fast weights modulate prediction: x_pred = tanh((C + U @ V.T) @ h)
+        # Using efficient batch computation
         
-        # Dynamic: (batch, input, hidden) = (input, rank) @ (batch, rank, hidden)
-        dynamic = torch.einsum('ir,brh->bih', self.V, state.U)  # (batch, input, hidden)
+        # V: (input_dim, rank), U: (batch, hidden, rank)
+        # dynamic: (batch, hidden, input) = (batch, hidden, rank) @ (rank, input)
+        dynamic = torch.bmm(state.U, self.V.T.unsqueeze(0).expand(state.U.shape[0], -1, -1))  # (batch, hidden, input)
         
         # Add dynamic component to C (modulation, not subtraction)
-        C_effective = self.C.unsqueeze(0) + dynamic * 0.1  # (batch, input, hidden)
+        # C_effective: (batch, hidden, input)
+        C_effective = self.C.T.unsqueeze(0) + dynamic * 0.1
         
         # Prediction: (batch, input) = (batch, hidden) @ (batch, hidden, input)
-        x_pred_raw = torch.bmm(state.h.unsqueeze(1), C_effective.transpose(1, 2)).squeeze(1)
+        x_pred_raw = torch.bmm(state.h.unsqueeze(1), C_effective).squeeze(1)
         
         # Apply activation and scale
         x_pred = torch.tanh(x_pred_raw) * x.norm(dim=-1, keepdim=True)
@@ -391,11 +393,14 @@ class DREAMCell(nn.Module):
         # ================================================================
         # State Update with LTC
         # ================================================================
-        # Fast effect using einsum: (batch, hidden, rank) @ (rank, input) @ (batch, input, 1)
+        # Fast effect using einsum: (batch, hidden, rank) @ (rank, input) @ (batch, input)
         U_batch = state.U  # (batch, hidden, rank)
         
         # fast_effect = U @ V.T @ x_norm
-        fast_effect_state = torch.einsum('bhr,ri,bi->bhr', U_batch, self.V, x_norm)  # (batch, hidden)
+        # (batch, hidden, rank) @ (rank, input) = (batch, hidden, input)
+        UVt = torch.einsum('bhr,ir->bhi', U_batch, self.V)  # (batch, hidden, input)
+        # (batch, hidden, input) @ (batch, input) = (batch, hidden)
+        fast_effect_state = torch.bmm(UVt, x_norm.unsqueeze(2)).squeeze(2)  # (batch, hidden)
         
         base_effect = self.B @ x_norm.T
         base_effect = base_effect.T  # (batch, hidden)
