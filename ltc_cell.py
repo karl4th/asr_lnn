@@ -141,19 +141,25 @@ class LTCRNN(nn.Module):
         for t in range(seq_len):
             x_t = x[t]
             
+            # Создаем новые скрытые состояния (не in-place!)
+            new_hidden = []
+
             # Проходим через все слои
             for layer_idx, layer in enumerate(self.layers):
                 h_prev = hidden[layer_idx]
                 h_new = layer(x_t, h_prev)
-                hidden[layer_idx] = h_new
-                
+                new_hidden.append(h_new)
+
                 # Выход слоя становится входом следующего
                 x_t = h_new
-                
+
                 # Применяем dropout между слоями (кроме последнего)
                 if self.dropout is not None and layer_idx < self.num_layers - 1:
                     x_t = self.dropout(x_t)
             
+            # Обновляем hidden после всех слоёв
+            hidden = torch.stack(new_hidden)
+
             outputs.append(x_t)
         
         # Склеиваем выходы

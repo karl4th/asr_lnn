@@ -64,7 +64,7 @@ class PhonemeRecognizer:
     
     def _load_model(self, model_path):
         """Загружает модель из чекпоинта"""
-        checkpoint = torch.load(model_path, map_location=self.device)
+        checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
         
         # Создаём модель
         model = LNNASR(num_classes=72)
@@ -81,7 +81,7 @@ class PhonemeRecognizer:
         """Пытается загрузить статистики нормализации"""
         stats_path = Path('mel_stats.pth')
         if stats_path.exists():
-            stats = torch.load(stats_path, map_location=self.device)
+            stats = torch.load(stats_path, map_location=self.device, weights_only=False)
             self.means = stats['means'].to(self.device)
             self.stds = stats['stds'].to(self.device)
             print(f"📦 Статистики нормализации загружены")

@@ -165,7 +165,7 @@ class ASRDataset(Dataset):
         """Вычисляет или загружает глобальные среднее и стандартное отклонение"""
         if os.path.exists(self.stats_path) and not force_recompute:
             print(f"📦 Загружаем статистики из {self.stats_path}")
-            stats = torch.load(self.stats_path)
+            stats = torch.load(self.stats_path, weights_only=False)
             self.means = stats['means']
             self.stds = stats['stds']
             return self.means, self.stds
