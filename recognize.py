@@ -112,71 +112,106 @@ class PhonemeRecognizer:
         
         return phones
     
-    def recognize(self, audio_path):
+    def recognize(self, audio_path, return_detailed=False):
         """
         Распознаёт фонемы из аудио файла
-        
+
         Args:
             audio_path: путь к аудио файлу (.wav)
-        
+            return_detailed: если True, возвращает детальную информацию
+
         Returns:
             phones: список распознанных фонем
             confidence: уверенность модели (средняя по всем фреймам)
+            detailed: (опционально) детальная информация по фреймам
         """
         # Загружаем аудио
         waveform, sr = torchaudio.load(audio_path)
-        
+
         # Ресемплируем если нужно
         if sr != self.sample_rate:
             resampler = torchaudio.transforms.Resample(sr, self.sample_rate)
             waveform = resampler(waveform)
-        
+
         # Вычисляем мел-спектрограмму
         mel_spec = self._compute_mel_spec(waveform)
-        
+
         # Нормализуем
         mel_spec = self._normalize(mel_spec)
-        
+
         # Добавляем batch dimension
         mel_spec = mel_spec.unsqueeze(0).to(self.device)  # [1, 80, time]
-        
+
         # Инференс
         with torch.no_grad():
             logits, _ = self.model.forward(mel_spec)
-            
+
             # Greedy decoding
             predictions = torch.argmax(logits, dim=-1)  # [1, time]
-            
+
             # Вычисляем confidence (softmax max probability)
             probs = torch.softmax(logits, dim=-1)
             confidences = probs.max(dim=-1).values
             avg_confidence = confidences.mean().item()
-            
+
             # Декодируем последовательность
             phones = self._decode_sequence(predictions[0])
+
+        if return_detailed:
+            # Декодируем с confidence per phone
+            detailed = []
+            prev_token = -1
+            for i, (token, conf) in enumerate(zip(predictions[0], confidences)):
+                if token != prev_token and token != 0:
+                    phone = self.idx_to_char.get(token.item(), '<unk>')
+                    detailed.append({
+                        'phone': phone,
+                        'confidence': conf.item(),
+                        'frame': i
+                    })
+                prev_token = token
+            
+            return phones, avg_confidence, detailed
         
         return phones, avg_confidence
-    
-    def recognize_batch(self, audio_paths):
+
+    def recognize_batch(self, audio_paths, show_examples=True):
         """
         Распознаёт фонемы из нескольких аудио файлов
-        
+
         Args:
             audio_paths: список путей к аудио файлам
-        
+            show_examples: показывать детальные примеры
+
         Returns:
             results: список кортежей (phones, confidence)
         """
         results = []
-        for path in audio_paths:
+        for idx, path in enumerate(audio_paths):
             try:
-                phones, conf = self.recognize(path)
-                results.append((path, phones, conf))
-                print(f"✅ {Path(path).name}: {' '.join(phones)} (conf={conf:.3f})")
+                if show_examples and idx < 3:
+                    # Детальный вывод для первых 3 файлов
+                    phones, conf, detailed = self.recognize(path, return_detailed=True)
+                    results.append((path, phones, conf))
+                    
+                    print(f"\n{'='*70}")
+                    print(f"📁 Файл: {Path(path).name}")
+                    print(f"{'='*70}")
+                    print(f"Распознанные фонемы: {' '.join(phones)}")
+                    print(f"Средняя уверенность: {conf:.3f}")
+                    print(f"\nДетально по фонемам:")
+                    for i, item in enumerate(detailed):
+                        conf_bar = '█' * int(item['confidence'] * 10)
+                        print(f"  {i+1:2d}. {item['phone']:5s} | {conf_bar:10s} ({item['confidence']:.3f})")
+                else:
+                    phones, conf = self.recognize(path)
+                    results.append((path, phones, conf))
+                    print(f"✅ {Path(path).name}: {' '.join(phones)} (conf={conf:.3f})")
+                    
             except Exception as e:
                 print(f"❌ Ошибка {path}: {e}")
                 results.append((path, None, None))
-        
+
         return results
 
 

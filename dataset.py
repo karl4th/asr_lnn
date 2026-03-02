@@ -6,22 +6,71 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.utils.rnn as rnn_utils
 import torchaudio.transforms as T
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Subset
 import re
 
+
+def create_data_splits(metadata_path, train_ratio=0.8, val_ratio=0.1, test_ratio=0.1, seed=42):
+    """
+    Разделяет данные на train/val/test (80/10/10 по умолчанию)
+    
+    Args:
+        metadata_path: путь к metadata.csv или папка для сохранения splits
+        train_ratio: доля train данных
+        val_ratio: доля val данных
+        test_ratio: доля test данных
+        seed: random seed
+    
+    Returns:
+        train_df, val_df, test_df: DataFrame с данными для каждого сплита
+    """
+    assert abs(train_ratio + val_ratio + test_ratio - 1.0) < 1e-6, "Сумма ratios должна быть 1.0"
+    
+    # Загружаем метаданные
+    df = pd.read_csv(metadata_path, sep='|')
+    
+    # Перемешиваем
+    df = df.sample(frac=1, random_state=seed).reset_index(drop=True)
+    
+    n_total = len(df)
+    n_train = int(n_total * train_ratio)
+    n_val = int(n_total * val_ratio)
+    # n_test = n_total - n_train - n_val  # остаток для test
+    
+    # Разделяем
+    train_df = df.iloc[:n_train].reset_index(drop=True)
+    val_df = df.iloc[n_train:n_train + n_val].reset_index(drop=True)
+    test_df = df.iloc[n_train + n_val:].reset_index(drop=True)
+    
+    print(f"\n📊 Разделение данных ({len(df)} всего):")
+    print(f"   Train: {len(train_df)} ({len(train_df)/len(df)*100:.1f}%)")
+    print(f"   Val:   {len(val_df)} ({len(val_df)/len(df)*100:.1f}%)")
+    print(f"   Test:  {len(test_df)} ({len(test_df)/len(df)*100:.1f}%)")
+    
+    return train_df, val_df, test_df
+
+
 class ASRDataset(Dataset):
-    def __init__(self, metadata_path, vocab_path, audio_dir, target_length=None, training=True, use_time_stretch=False):
+    def __init__(self, metadata_path, vocab_path, audio_dir, target_length=None, training=True, 
+                 use_time_stretch=False, metadata_df=None):
         """
         Args:
-            metadata_path: путь к metadata.csv
+            metadata_path: путь к metadata.csv (или префикс для split)
             vocab_path: путь к vocab.txt
             audio_dir: путь к папке с аудио
             target_length: если указан, все мел-спектрограммы будут дополнены/обрезаны до этой длины.
                            Для CTC обучения рекомендуется target_length=None.
             training: флаг обучения для включения аугментаций
             use_time_stretch: включить ли аугментацию изменения скорости (опасно для CTC)
+            metadata_df: опционально, DataFrame с метаданными (для split)
         """
-        self.metadata = pd.read_csv(metadata_path, sep='|')
+        if metadata_df is not None:
+            self.metadata = metadata_df
+            print(f"📊 Загружено {len(self.metadata)} примеров из DataFrame")
+        else:
+            self.metadata = pd.read_csv(metadata_path, sep='|')
+            print(f"📊 Загружено {len(self.metadata)} примеров из {metadata_path}")
+        
         self.audio_dir = audio_dir
         self.target_length = target_length
         self.training = training
