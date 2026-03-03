@@ -14,6 +14,14 @@ copyright = '2026, Manifestro Team'
 author = 'Manifestro Team'
 release = '0.1.3'
 
+# HTML title (fixes "<no title>" in browser tab)
+html_title = 'DREAM Documentation'
+html_short_title = 'DREAM'
+html_theme_options = {
+    'navigation_depth': 4,
+    'collapse_navigation': False,
+}
+
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
