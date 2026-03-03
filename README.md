@@ -218,10 +218,10 @@ MIT License — see [LICENSE](LICENSE) for details.
 ## Citation
 
 ```bibtex
-@software{dream2024,
+@software{dream2026,
   title = {DREAM: Dynamic Recall and Elastic Adaptive Memory},
   author = {Manifestro Team},
-  year = {2024},
+  year = {2026},
   url = {https://github.com/karl4th/dream-nn}
 }
 ```
