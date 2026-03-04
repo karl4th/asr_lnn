@@ -1,7 +1,7 @@
 """
 Test 1: Basic ASR Reconstruction.
 
-Based on NNAI-S Spec Section 7.2.1.
+Based on DREAM Architecture Specification Section 7.2.1.
 
 Tests the model's ability to memorize and reconstruct audio patterns.
 
@@ -123,7 +123,7 @@ def run_basic_asr_test(
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     print("=" * 70)
-    print("NNAI-S Test 1: Basic ASR Reconstruction")
+    print("DREAM Benchmark - Test 1: Basic ASR Reconstruction")
     print("=" * 70)
 
     # Load data

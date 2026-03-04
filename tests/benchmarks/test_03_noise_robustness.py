@@ -1,7 +1,7 @@
 """
 Test 3: Noise Robustness.
 
-Based on NNAI-S Spec Section 7.2.3.
+Based on DREAM Architecture Specification Section 7.2.3.
 
 Tests the model's robustness to additive noise at different SNR levels.
 
@@ -123,7 +123,7 @@ def run_noise_robustness_test(
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     print("=" * 70)
-    print("NNAI-S Test 3: Noise Robustness")
+    print("DREAM Benchmark - Test 3: Noise Robustness")
     print("=" * 70)
 
     # Load data

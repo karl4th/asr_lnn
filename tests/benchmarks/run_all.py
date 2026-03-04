@@ -1,5 +1,5 @@
 """
-NNAI-S Benchmark Runner.
+DREAM Benchmark Runner.
 
 Runs all benchmark tests and generates comparison report.
 
@@ -37,7 +37,7 @@ def run_test(test_file: str) -> bool:
 def generate_report(results_dir: Path) -> str:
     """Generate markdown report from JSON results."""
     report = []
-    report.append("# NNAI-S Benchmark Report")
+    report.append("# DREAM Benchmark Report")
     report.append(f"\nGenerated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 
     # Initialize data variables
@@ -143,7 +143,7 @@ def generate_report(results_dir: Path) -> str:
 def main():
     """Run all benchmarks and generate report."""
     print("="*70)
-    print("NNAI-S BENCHMARK SUITE")
+    print("DREAM BENCHMARK SUITE")
     print("="*70)
     print("\nRunning all benchmark tests...")
     print("Note: This may take 10-30 minutes depending on hardware")

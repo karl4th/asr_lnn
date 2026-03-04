@@ -1,12 +1,34 @@
-# NNAI-S Benchmark Suite
+# DREAM Benchmark Suite
 
 Comprehensive benchmarks for comparing DREAM, LSTM, and Transformer models on audio tasks.
 
-Based on **NNAI-S Architecture Specification Section 7**.
+Based on **DREAM Architecture Specification Section 7**.
 
 ---
 
 ## Quick Start
+
+### Run All Benchmarks
+
+```bash
+# Full benchmark suite (10-30 minutes)
+uv run python tests/benchmarks/run_all.py
+```
+
+### Run Individual Tests
+
+```bash
+# Test 1: Basic ASR Reconstruction
+uv run python tests/benchmarks/test_01_basic_asr.py
+
+# Test 2: Speaker Adaptation
+uv run python tests/benchmarks/test_02_speaker_adaptation.py
+
+# Test 3: Noise Robustness
+uv run python tests/benchmarks/test_03_noise_robustness.py
+```
+
+---
 
 ### Run All Benchmarks
 
@@ -210,8 +232,8 @@ uv run python tests/benchmarks/test_01_basic_asr.py \
 If you use these benchmarks:
 
 ```bibtex
-@software{nnai-s-benchmarks,
-  title = {NNAI-S Benchmark Suite},
+@software{dream-benchmarks,
+  title = {DREAM Benchmark Suite},
   author = {Manifestro Team},
   year = {2026},
   url = {https://github.com/karl4th/dream-nn}

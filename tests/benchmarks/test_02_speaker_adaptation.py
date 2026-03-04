@@ -1,7 +1,7 @@
 """
 Test 2: Speaker Adaptation.
 
-Based on NNAI-S Spec Section 7.2.2.
+Based on DREAM Architecture Specification Section 7.2.2.
 
 Tests the model's ability to adapt to speaker change mid-sequence.
 
@@ -127,7 +127,7 @@ def run_speaker_adaptation_test(
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     print("=" * 70)
-    print("NNAI-S Test 2: Speaker Adaptation")
+    print("DREAM Benchmark - Test 2: Speaker Adaptation")
     print("=" * 70)
 
     # Load data
