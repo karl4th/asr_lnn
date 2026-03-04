@@ -149,7 +149,8 @@ def main():
     print("Note: This may take 10-30 minutes depending on hardware")
 
     benchmarks_dir = Path(__file__).parent
-    results_dir = benchmarks_dir
+    results_dir = benchmarks_dir / 'results'
+    results_dir.mkdir(parents=True, exist_ok=True)
 
     tests = [
         str(benchmarks_dir / 'test_01_basic_asr.py'),
@@ -162,7 +163,26 @@ def main():
         success = run_test(test)
         results.append((test, success))
 
-    # Generate report
+        # Save results to results/ directory
+        test_name = Path(test).stem.replace('test_', '').replace('_', '-')
+        for ext in ['json']:
+            src = benchmarks_dir / f'results_{test_name}.{ext}'
+            if src.exists():
+                # Already in right place from test script
+                pass
+
+    # Generate visualizations
+    print("\n" + "="*70)
+    print("GENERATING VISUALIZATIONS")
+    print("="*70)
+
+    try:
+        from benchmarks.visualize import main as visualize_main
+        visualize_main()
+    except ImportError:
+        print("  ⚠ Visualization module not found. Skipping plots.")
+
+    # Generate text report
     print("\n" + "="*70)
     print("GENERATING REPORT")
     print("="*70)
@@ -187,6 +207,7 @@ def main():
 
     all_passed = all(s for _, s in results)
     print(f"\nOverall: {'✅ ALL TESTS PASSED' if all_passed else '❌ SOME TESTS FAILED'}")
+    print(f"\nResults directory: {results_dir}")
 
 
 if __name__ == '__main__':

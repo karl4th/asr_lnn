@@ -237,7 +237,8 @@ def run_noise_robustness_test(
         print("\n⚠️ Surprise gate could be more sensitive to noise")
 
     # Save results
-    output_file = Path(__file__).parent / 'results_noise_robustness.json'
+    output_file = Path(__file__).parent / 'results' / 'results_noise_robustness.json'
+    output_file.parent.mkdir(parents=True, exist_ok=True)
     save_results = {
         name: {
             'passed': data['passed'],

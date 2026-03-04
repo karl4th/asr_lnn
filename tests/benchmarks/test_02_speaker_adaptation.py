@@ -216,7 +216,8 @@ def run_speaker_adaptation_test(
     print(f"Result: {'✅ MEETS SPEC' if dream_steps < 50 else '❌ EXCEEDS SPEC'}")
 
     # Save results
-    output_file = Path(__file__).parent / 'results_speaker_adaptation.json'
+    output_file = Path(__file__).parent / 'results' / 'results_speaker_adaptation.json'
+    output_file.parent.mkdir(parents=True, exist_ok=True)
     save_results = {
         name: {
             'passed': data['passed'],

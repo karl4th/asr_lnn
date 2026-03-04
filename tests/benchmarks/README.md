@@ -145,10 +145,36 @@ After running benchmarks:
 
 ```
 tests/benchmarks/
-├── results_basic_asr.json           # Test 1 results
-├── results_speaker_adaptation.json  # Test 2 results
-├── results_noise_robustness.json    # Test 3 results
-└── BENCHMARK_REPORT.md              # Full comparison report
+├── results/
+│   ├── results_basic_asr.json           # Test 1 results
+│   ├── results_speaker_adaptation.json  # Test 2 results
+│   ├── results_noise_robustness.json    # Test 3 results
+│   ├── figures/
+│   │   ├── fig1_training_curves.pdf     # Training curves (for paper)
+│   │   ├── fig2_speaker_adaptation.pdf  # Adaptation results
+│   │   ├── fig3_noise_robustness.pdf    # Noise robustness
+│   │   ├── table_summary.pdf            # Summary table
+│   │   └── benchmark_table.tex          # LaTeX table
+│   └── BENCHMARK_REPORT.md              # Full report
+```
+
+### For arxiv.org Submission
+
+1. **Figures**: Use PDF files from `results/figures/`
+   - Fig. 1: Training convergence (`fig1_training_curves.pdf`)
+   - Fig. 2: Speaker adaptation (`fig2_speaker_adaptation.pdf`)
+   - Fig. 3: Noise robustness (`fig3_noise_robustness.pdf`)
+
+2. **Tables**: Copy `benchmark_table.tex` into your LaTeX paper
+
+3. **Citation**:
+```bibtex
+@software{dream-benchmarks,
+  title = {DREAM Benchmark Suite},
+  author = {Manifestro Team},
+  year = {2026},
+  url = {https://github.com/karl4th/dream-nn}
+}
 ```
 
 ---

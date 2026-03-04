@@ -208,7 +208,8 @@ def run_basic_asr_test(
               f"{m['improvement_pct']:10.1f}% | {m['train_time_s']:4.0f}s | {status}")
 
     # Save results
-    output_file = Path(__file__).parent / 'results_basic_asr.json'
+    output_file = Path(__file__).parent / 'results' / 'results_basic_asr.json'
+    output_file.parent.mkdir(parents=True, exist_ok=True)
     save_results = {
         name: {
             'passed': data['passed'],
