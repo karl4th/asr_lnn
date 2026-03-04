@@ -40,6 +40,11 @@ def generate_report(results_dir: Path) -> str:
     report.append("# NNAI-S Benchmark Report")
     report.append(f"\nGenerated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 
+    # Initialize data variables
+    asr_data = {}
+    adapt_data = {}
+    noise_data = {}
+
     # Test 1: Basic ASR
     asr_file = results_dir / 'results_basic_asr.json'
     if asr_file.exists():

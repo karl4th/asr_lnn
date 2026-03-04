@@ -52,12 +52,6 @@ def train_model(
 
     history = {'loss': []}
 
-    # Initialize state once for DREAM (persistent memory)
-    if model_name == 'dream':
-        state = model.init_state(train_data.shape[0], device=device)
-    else:
-        state = None
-
     print(f"\nTraining {model_name} on {train_data.shape}...")
 
     for epoch in range(n_epochs):
@@ -66,14 +60,32 @@ def train_model(
         n_segments = 0
 
         seq_len = train_data.shape[1]
+        
+        # Initialize state at start of epoch
+        if model_name == 'dream':
+            state = model.init_state(train_data.shape[0], device=device)
+        elif model_name == 'lstm':
+            state = model.init_state(train_data.shape[0], device=device)
+        else:
+            state = None
+
         for start in range(0, seq_len, segment_size):
             end = min(start + segment_size, seq_len)
             segment = train_data[:, start:end, :].to(device)
 
             if model_name == 'dream':
                 recon, state = model(segment, state)
-                state = state.detach()  # Truncated BPTT
-            else:
+                # Detach state for truncated BPTT
+                if isinstance(state, tuple):
+                    state = tuple(s.detach() for s in state)
+                else:
+                    state = state.detach()
+            elif model_name == 'lstm':
+                recon, state = model(segment, state)
+                # Detach hidden state for truncated BPTT
+                if state is not None:
+                    state = tuple(s.detach() for s in state)
+            else:  # transformer
                 recon, state = model(segment, state)
 
             loss = criterion(recon, segment)
