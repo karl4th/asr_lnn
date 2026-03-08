@@ -40,9 +40,22 @@ class DREAMCell(nn.Module):
     ...     h, state = cell(x, state)
     """
 
-    def __init__(self, config: DREAMConfig):
+    def __init__(self, config: DREAMConfig, freeze_fast_weights: bool = False):
+        """
+        Initialize DREAM cell.
+
+        Parameters
+        ----------
+        config : DREAMConfig
+            Model configuration
+        freeze_fast_weights : bool, default=False
+            If True, fast weights (U) are frozen during training.
+            Use this for static base training phase.
+            Set to False for inference/adaptation phase.
+        """
         super().__init__()
         self.config = config
+        self.freeze_fast_weights = freeze_fast_weights  # NEW FLAG
 
         # ================================================================
         # BLOCK 1: Predictive Coding (Spec Section 2)
@@ -169,37 +182,38 @@ class DREAMCell(nn.Module):
         dU = -λ * (U - U_target) + (η * S) * (h_prev ⊗ error) @ V
 
         where ⊗ is outer product, @ is matrix multiplication.
+
+        If freeze_fast_weights is True, this is a no-op (static base training).
         """
+        # SKIP UPDATE if frozen (static base training phase)
+        if self.freeze_fast_weights:
+            return
+
         batch_size = h_prev.shape[0]
 
-        # Hebbian term: outer product projected onto V
-        # (batch, hidden, 1) @ (batch, 1, input) = (batch, hidden, input)
-        # Then @ V: (batch, hidden, input) @ (input, rank) -> WRONG!
-        # V is (hidden, rank), so we need: (h ⊗ e) @ V
-        # h: (batch, hidden), e: (batch, input)
-        # outer: (batch, hidden, input)
-        # We want: (batch, hidden, rank) = (batch, hidden, input) @ ??? 
+        # Hebbian term: outer(h, e) @ V
+        # h: (batch, hidden), e: (batch, input), V: (input, rank)
+        # Result: (batch, hidden, rank)
+        eV = error @ self.V  # (batch, rank)
+        hebbian = state.h.unsqueeze(2) * eV.unsqueeze(1)  # (batch, hidden, rank)
 
-        # Actually per spec: update = outer(h, e) @ V
-        # But V is (hidden, rank), not (input, rank)
-        # Let me re-read spec...
+        # Plasticity modulation (eta * surprise)
+        plasticity = self.eta.unsqueeze(0) * surprise.unsqueeze(1)
+        plasticity = plasticity.unsqueeze(2)  # (batch, hidden, 1)
 
-        # Spec 4.1: W_fast = U @ V.T where U: (d_state, rank), V: (d_model, rank)
-        # Spec 4.2: update = outer(h, e) @ V
-        # This means: outer(h,e) is (d_state, d_model), V is (d_model, rank)
-        # So result is (d_state, rank) ✓
+        # Forgetting term (decay toward U_target)
+        forgetting = -self.forgetting_rate * (state.U - state.U_target)
 
-        # In our case: d_model = input_dim, d_state = hidden_dim
-        # V should be (input_dim, rank) NOT (hidden_dim, rank)
-        # Let me fix this...
+        # Full STDP update
+        dU = forgetting + plasticity * hebbian
 
-        # Actually, looking at pseudocode in spec section 6:
-        # update = torch.outer(h_prev, e_t) @ V  # V is (d_model, rank)
-        # So V should match input dimension for sensory filtering
+        # Euler integration
+        U_new = state.U + dU * self.dt
 
-        # For now, let's use V as (input_dim, rank) to match spec
-        # We'll need to change initialization too
-        pass  # Will fix in full rewrite
+        # Normalize to target norm (homeostasis)
+        U_norm = U_new.norm(dim=(1, 2), keepdim=True)
+        scale = (self.target_norm / (U_norm + 1e-6)).clamp(max=2.0)
+        state.U = U_new * scale
 
     def compute_ltc_update(
         self,

@@ -46,6 +46,7 @@ class DREAM(nn.Module):
         input_dim: int,
         hidden_dim: int,
         rank: int = 8,
+        freeze_fast_weights: bool = False,
         **kwargs
     ):
         super().__init__()
@@ -55,8 +56,9 @@ class DREAM(nn.Module):
             rank=rank,
             **kwargs
         )
-        self.cell = DREAMCell(self.config)
+        self.cell = DREAMCell(self.config, freeze_fast_weights=freeze_fast_weights)
         self.hidden_dim = hidden_dim
+        self.freeze_fast_weights = freeze_fast_weights
     
     def init_state(
         self,
@@ -82,7 +84,34 @@ class DREAM(nn.Module):
             Initialized state
         """
         return self.cell.init_state(batch_size, device, dtype)
-    
+
+    def set_fast_weights_mode(self, freeze: bool):
+        """
+        Set fast weights training mode.
+
+        Parameters
+        ----------
+        freeze : bool
+            True  = Static base training (fast weights frozen)
+            False = Adaptation/Inference (fast weights active)
+        """
+        self.freeze_fast_weights = freeze
+        self.cell.freeze_fast_weights = freeze
+
+    def train(self, mode: bool = True):
+        """
+        Set training mode and freeze fast weights during training.
+
+        Parameters
+        ----------
+        mode : bool
+            True for training, False for evaluation
+        """
+        super().train(mode)
+        # Freeze fast weights during training, unfreeze for eval/inference
+        self.set_fast_weights_mode(freeze=mode)
+        return self
+
     def forward(
         self,
         x: torch.Tensor,

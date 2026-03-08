@@ -247,6 +247,6 @@ uv run python tests/benchmarks/run_all.py
   author = {Manifestro Team},
   year = {2026},
   url = {https://github.com/karl4th/dream-nn},
-  version = "0.1.2"
+  version = "0.1.3"
 }
 ```
