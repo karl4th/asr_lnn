@@ -15,9 +15,9 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from .model import SandayASR
-from .phonemes import EnglishPhonemes
-from .data import LJSpeechDataset, create_dataloader
+from sanday.model import SandayASR
+from sanday.phonemes import EnglishPhonemes
+from sanday.data import LJSpeechDataset, create_dataloader
 
 
 class CTCWithAlignment(nn.Module):

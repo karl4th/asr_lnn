@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import List, Tuple, Dict, Optional
 from torch.utils.data import Dataset, DataLoader
 
-from .phonemes import EnglishPhonemes
+from sanday.phonemes import EnglishPhonemes
 
 
 class LJSpeechDataset(Dataset):
