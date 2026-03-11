@@ -68,10 +68,33 @@ class EnglishPhonemes:
             try:
                 from g2p_en import G2p
                 self._g2p = G2p()
+                
+                # Download required NLTK data if not present
+                import nltk
+                try:
+                    nltk.data.find('taggers/averaged_perceptron_tagger')
+                except LookupError:
+                    print("[g2p] Downloading NLTK averaged_perceptron_tagger...")
+                    nltk.download('averaged_perceptron_tagger', quiet=True)
+                
+                try:
+                    nltk.data.find('corpora/cmudict')
+                except LookupError:
+                    print("[g2p] Downloading NLTK cmudict...")
+                    nltk.download('cmudict', quiet=True)
+                    
             except ImportError:
                 raise ImportError(
                     "g2p-en not installed. Install with: pip install g2p-en"
                 )
+            except LookupError as e:
+                # Handle g2p-en specific NLTK errors
+                if "averaged_perceptron_tagger_eng" in str(e):
+                    # Use standard tagger instead
+                    import nltk
+                    nltk.download('averaged_perceptron_tagger', quiet=True)
+                raise
+                    
         return self._g2p
     
     def text_to_phonemes(self, text: str) -> List[str]:
