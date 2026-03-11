@@ -397,8 +397,8 @@ class CoordinatedDREAMStack(nn.Module):
 
                 # Compute inter-layer prediction loss
                 if self.use_inter_layer_prediction and return_losses and i > 0:
-                    # Prediction from layer i for layer i-1
-                    pred_lower = states.predictions[i]
+                    # Prediction from layer i for layer i-1 (detach to avoid second-order gradients)
+                    pred_lower = states.predictions[i].detach()
                     # Actual output from layer i-1
                     actual_lower = layer_outputs[i-1]
                     # Prediction error
