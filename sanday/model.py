@@ -132,7 +132,7 @@ class SandayASR(nn.Module):
                 x: torch.Tensor,
                 lengths: Optional[torch.Tensor] = None,
                 return_states: bool = False,
-                stage: str = 'adaptation',  # NEW: 'pretrain' or 'adaptation'
+                stage: str = None,  # NEW: explicit stage override
                 ) -> Dict[str, torch.Tensor]:
         """
         Forward pass.
@@ -145,9 +145,9 @@ class SandayASR(nn.Module):
             Sequence lengths (batch,)
         return_states : bool
             If True, return DREAM states for hierarchy analysis
-        stage : str
-            'pretrain' → return reconstruction
-            'adaptation' → return CTC logits
+        stage : str, optional
+            'pretrain' or 'adaptation' - explicit override
+            If None, uses training mode to decide
         
         Returns
         -------
@@ -186,8 +186,13 @@ class SandayASR(nn.Module):
         
         outputs = {}
         
+        # Determine stage: explicit override OR based on training mode
+        if stage is None:
+            # Auto-detect: training mode = pretrain, eval mode = adaptation
+            stage = 'pretrain' if self.training else 'adaptation'
+        
         # Stage 1: Reconstruction
-        if stage == 'pretrain' or self.is_pretraining():
+        if stage == 'pretrain':
             if hasattr(self, 'reconstruction_head'):
                 recon = self.reconstruction_head(hidden)
             else:
@@ -200,7 +205,7 @@ class SandayASR(nn.Module):
             outputs['hidden'] = hidden
         
         # Stage 2: CTC
-        else:
+        else:  # stage == 'adaptation'
             ctc_logits = self.ctc_head(hidden)
             log_probs = torch.log_softmax(ctc_logits, dim=-1)
             

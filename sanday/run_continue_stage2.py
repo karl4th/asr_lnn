@@ -167,7 +167,7 @@ def main():
             
             optimizer.zero_grad()
             
-            # Forward with stage='adaptation'
+            # Forward with explicit stage='adaptation'
             outputs = model(features, stage='adaptation')
             
             # CTC loss

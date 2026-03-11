@@ -146,7 +146,8 @@ class TwoStageTrainer:
         
         # Switch to adaptation mode
         self.model.switch_to_adaptation()
-        self.model.train()  # Switch back to train mode!
+        # Note: switch_to_adaptation() calls eval(), but we need train() for training
+        # The forward() will use stage='adaptation' explicitly
         
         # Optimizer: ALL parameters (including fast weights plasticity)
         optimizer = torch.optim.Adam(
@@ -176,7 +177,7 @@ class TwoStageTrainer:
                 
                 optimizer.zero_grad()
                 
-                # Forward with stage='adaptation'
+                # Forward with explicit stage='adaptation'
                 outputs = self.model(features, stage='adaptation')
                 
                 # CTC loss
@@ -244,6 +245,7 @@ class TwoStageTrainer:
             feat_lengths = batch['feature_lengths'].to(self.device)
             phoneme_lengths = batch['phoneme_lengths'].to(self.device)
             
+            # Forward with explicit stage='adaptation'
             outputs = self.model(features, stage='adaptation')
             
             log_probs = outputs['log_probs'].transpose(0, 1)
@@ -257,7 +259,6 @@ class TwoStageTrainer:
             total_loss += loss.item()
             n_batches += 1
         
-        self.model.train()
         return total_loss / n_batches
 
 
