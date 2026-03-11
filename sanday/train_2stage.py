@@ -146,6 +146,7 @@ class TwoStageTrainer:
         
         # Switch to adaptation mode
         self.model.switch_to_adaptation()
+        self.model.train()  # Switch back to train mode!
         
         # Optimizer: ALL parameters (including fast weights plasticity)
         optimizer = torch.optim.Adam(
