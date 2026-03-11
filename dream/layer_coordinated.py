@@ -72,9 +72,9 @@ class CoordinatedDREAMCell(DREAMCell):
         self.use_hierarchical_tau = use_hierarchical_tau
         
         # Hierarchical tau: upper layers have larger tau (slower adaptation)
-        # Layer 0: factor=1.0, Layer 3: factor=2.5
+        # Layer 0: factor=1.0, Layer 1: factor=1.5, Layer 2: factor=2.0, Layer 3: factor=2.5
         if use_hierarchical_tau:
-            self.tau_depth_factor = 1.0 + 0.5 * layer_idx
+            self.tau_depth_factor = 1.0 + 0.5 * layer_idx  # 1.0, 1.5, 2.0, 2.5
         else:
             self.tau_depth_factor = 1.0
         

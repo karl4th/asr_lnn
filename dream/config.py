@@ -155,7 +155,7 @@ class DREAMConfig:
     ltc_tau_sys: float = 5.0
     """Base system time constant for LTC (lower = faster response)"""
 
-    ltc_surprise_scale: float = 5.0
+    ltc_surprise_scale: float = 10.0  # Increased from 5.0 for more dynamic tau
     """Scaling factor for surprise modulation of tau"""
 
     use_coordination: bool = False

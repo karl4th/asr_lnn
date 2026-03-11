@@ -88,9 +88,9 @@ def measure_layer_adaptation(
 
     states = model.init_states(batch_size, device=device)
 
-    # Track surprises and LTC tau at each layer
+    # Track surprises and EFFECTIVE tau at each layer
     surprises_per_layer = [[] for _ in range(model.num_layers)]
-    taus_per_layer = [[] for _ in range(model.num_layers)]
+    effective_taus_per_layer = [[] for _ in range(model.num_layers)]
 
     with torch.no_grad():
         for t in range(seq_len):
@@ -105,10 +105,13 @@ def measure_layer_adaptation(
                 if hasattr(states.layer_states[i], 'avg_surprise'):
                     surprises_per_layer[i].append(states.layer_states[i].avg_surprise.mean().item())
 
-                # Track tau (from LTC)
-                if hasattr(layer, 'tau_sys'):
-                    tau = layer.tau_sys.item()
-                    taus_per_layer[i].append(tau)
+                # Compute EFFECTIVE tau (dynamic, depends on surprise)
+                # tau_eff = tau_sys * tau_depth_factor / (1 + surprise * tau_surprise_scale)
+                tau_base = layer.tau_sys.item() * layer.tau_depth_factor
+                surprise = states.layer_states[i].avg_surprise.mean().item()
+                tau_surprise_scale = layer.tau_surprise_scale.item()
+                effective_tau = tau_base / (1.0 + surprise * tau_surprise_scale)
+                effective_taus_per_layer[i].append(effective_tau)
 
                 # Prepare input for next layer
                 if i < model.num_layers - 1:
@@ -118,21 +121,22 @@ def measure_layer_adaptation(
     metrics = {}
     for i in range(model.num_layers):
         surprises = surprises_per_layer[i]
-        taus = taus_per_layer[i]
+        effective_taus = effective_taus_per_layer[i]
 
         # Adaptation speed: how quickly surprise decreases
         early_surprise = np.mean(surprises[:50]) if len(surprises) >= 50 else np.mean(surprises)
         late_surprise = np.mean(surprises[-50:]) if len(surprises) >= 50 else np.mean(surprises)
         adaptation_speed = (early_surprise - late_surprise) / (early_surprise + 1e-6)
 
-        # Average tau
-        avg_tau = np.mean(taus)
+        # Average EFFECTIVE tau (dynamic, not static tau_sys)
+        avg_effective_tau = np.mean(effective_taus)
 
         metrics[f'layer_{i}'] = {
             'early_surprise': float(early_surprise),
             'late_surprise': float(late_surprise),
             'adaptation_speed': float(adaptation_speed),
-            'avg_tau': float(avg_tau),
+            'avg_tau': float(avg_effective_tau),  # This is now effective tau
+            'tau_depth_factor': layer.tau_depth_factor,  # For debugging
         }
 
     return metrics
