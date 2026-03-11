@@ -115,6 +115,7 @@ def load_audio_files_from_metadata(metadata_path: str, audio_dir: str):
     import pandas as pd
     import librosa
     import torch
+    import numpy as np
 
     df = pd.read_csv(metadata_path, sep='|', header=None, names=['id', 'text', 'phonemes'])
     features = []

@@ -6,13 +6,27 @@ Usage:
     uv run python tests/benchmarks/run_all.py --audio-dir /path/to/LJSpeech-1.1 --device cuda
 """
 
+# Check dependencies first
+import sys
+from pathlib import Path
+
+# Add project root to path
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+# Try to import dream
+try:
+    import dream
+except ImportError:
+    print("ERROR: dream module not found. Install with: pip install -e .")
+    sys.exit(1)
+
+# Now import other dependencies
 import argparse
 import json
 import time
-import sys
 import random
 import shutil
-from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any
 

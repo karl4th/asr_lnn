@@ -113,6 +113,7 @@ def load_audio_files_from_metadata(metadata_path: str, audio_dir: str):
     """Load audio files from LJSpeech metadata."""
     import librosa
     import torch
+    import numpy as np
 
     df = pd.read_csv(metadata_path, sep='|', header=None, names=['id', 'text', 'phonemes'])
     
