@@ -340,9 +340,9 @@ class CoordinatedDREAMStack(nn.Module):
         """
         Forward pass through coordinated stack.
 
-        Two-pass processing:
-        1. Bottom-up: process input, compute predictions
-        2. Top-down: apply modulations
+        Processing:
+        - Bottom-up: process input through layers
+        - Top-down modulation from previous timestep (stored in states)
 
         Parameters
         ----------
@@ -382,6 +382,7 @@ class CoordinatedDREAMStack(nn.Module):
 
             for i, cell in enumerate(self.cells):
                 # Get modulation from layer above (None for top layer)
+                # Use modulation from PREVIOUS timestep (already detached)
                 modulation = states.modulations[i+1] if i < self.num_layers - 1 else None
 
                 # Forward through cell
@@ -392,13 +393,17 @@ class CoordinatedDREAMStack(nn.Module):
                 )
 
                 layer_outputs.append(h_new)
-                states.predictions[i] = prediction
-                states.modulations[i] = modulation_out
+                
+                # Store prediction and modulation for NEXT timestep
+                # Detach to prevent second-order gradients across timesteps
+                states.predictions[i] = prediction.detach()
+                states.modulations[i] = modulation_out.detach()
 
                 # Compute inter-layer prediction loss
                 if self.use_inter_layer_prediction and return_losses and i > 0:
-                    # Prediction from layer i for layer i-1 (detach to avoid second-order gradients)
-                    pred_lower = states.predictions[i].detach()
+                    # Prediction from layer i for layer i-1
+                    # Use detached prediction from previous timestep
+                    pred_lower = states.predictions[i]
                     # Actual output from layer i-1
                     actual_lower = layer_outputs[i-1]
                     # Prediction error

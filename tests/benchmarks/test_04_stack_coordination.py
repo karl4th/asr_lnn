@@ -95,6 +95,10 @@ def train_stack(
             if isinstance(states, CoordinatedState):
                 for i in range(len(states.layer_states)):
                     states.layer_states[i] = states.layer_states[i].detach()
+                # Also detach predictions and modulations to prevent second-order gradients
+                for i in range(len(states.predictions)):
+                    states.predictions[i] = states.predictions[i].detach()
+                    states.modulations[i] = states.modulations[i].detach()
             else:
                 for i in range(len(states)):
                     states[i] = states[i].detach()
