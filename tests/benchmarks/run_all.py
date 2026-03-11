@@ -204,19 +204,22 @@ def main():
 
     if 1 in all_results:
         r1 = all_results[1]
-        passed = r1.get('summary', {}).get('all_passed', False)
+        # Test 1 returns dict by model name, check if DREAM passed
+        passed = r1.get('dream', {}).get('passed', False)
         print(f"\n✓ Test 1 (ASR): {'PASS' if passed else 'FAIL'}")
         summary['results']['test_1_asr'] = {'passed': passed}
 
     if 2 in all_results:
         r2 = all_results[2]
-        passed = r2.get('summary', {}).get('all_passed', False)
+        # Test 2 returns dict by model name, check if DREAM passed
+        passed = r2.get('dream', {}).get('passed', False)
         print(f"✓ Test 2 (Adaptation): {'PASS' if passed else 'FAIL'}")
         summary['results']['test_2_adaptation'] = {'passed': passed}
 
     if 3 in all_results:
         r3 = all_results[3]
-        passed = r3.get('summary', {}).get('all_passed', False)
+        # Test 3 returns dict by model name, check if DREAM passed
+        passed = r3.get('dream', {}).get('passed', False)
         print(f"✓ Test 3 (Noise): {'PASS' if passed else 'FAIL'}")
         summary['results']['test_3_noise'] = {'passed': passed}
 
