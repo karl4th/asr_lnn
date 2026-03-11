@@ -78,14 +78,19 @@ class CoordinatedDREAMCell(DREAMCell):
         else:
             self.tau_depth_factor = 1.0
         
-        # Prediction head: predict lower layer activity
-        self.prediction_head = nn.Linear(config.hidden_dim, config.hidden_dim)
-        
-        # Modulation head: generate top-down modulation
-        self.modulation_head = nn.Sequential(
+        # Prediction head: predict lower layer activity (with normalization)
+        self.prediction_head = nn.Sequential(
             nn.Linear(config.hidden_dim, config.hidden_dim),
+            nn.LayerNorm(config.hidden_dim),
             nn.ReLU(),
-            nn.Linear(config.hidden_dim, config.hidden_dim),
+            nn.Linear(config.hidden_dim, config.hidden_dim)
+        )
+
+        # Modulation head: generate top-down modulation in [0, 1]
+        self.modulation_head = nn.Sequential(
+            nn.Linear(config.hidden_dim, config.hidden_dim // 4),
+            nn.ReLU(),
+            nn.Linear(config.hidden_dim // 4, config.hidden_dim),
             nn.Sigmoid()  # Output in [0, 1]
         )
 
@@ -164,9 +169,11 @@ class CoordinatedDREAMCell(DREAMCell):
         # 3. Fast Weights Update WITH modulation-enhanced plasticity
         # ================================================================
         # Modulation enhances plasticity: higher modulation → faster learning
+        # But use gentle modulation to avoid destabilizing training
         if modulation_from_above is not None and self.use_coordination:
-            # Modulation is in [0, 1], project to scalar boost
-            plasticity_boost = 0.5 + modulation_from_above.mean()  # Scalar
+            # Modulation is in [0, 1], apply as gentle multiplicative factor
+            # Base plasticity = 1.0, modulation scales it by ±20%
+            plasticity_boost = 1.0 + 0.2 * (modulation_from_above.mean() - 0.5)
             effective_eta = self.eta * plasticity_boost
         else:
             effective_eta = self.eta
@@ -269,7 +276,7 @@ class CoordinatedDREAMStack(nn.Module):
         dropout: float = 0.1,
         use_hierarchical_tau: bool = True,
         use_inter_layer_prediction: bool = True,
-        inter_layer_loss_weight: float = 0.1
+        inter_layer_loss_weight: float = 0.01  # Reduced from 0.1 to prevent domination
     ):
         super().__init__()
 
@@ -406,8 +413,10 @@ class CoordinatedDREAMStack(nn.Module):
                     pred_lower = states.predictions[i]
                     # Actual output from layer i-1
                     actual_lower = layer_outputs[i-1]
-                    # Prediction error
+                    # Prediction error (scaled down to not dominate reconstruction)
                     inter_error = F.mse_loss(pred_lower, actual_lower)
+                    # Normalize by dimension to prevent large values
+                    inter_error = inter_error / self.hidden_dims[i]
                     losses['inter_layer'] = losses['inter_layer'] + inter_error
 
                 # Prepare input for next layer
