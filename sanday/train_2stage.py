@@ -284,8 +284,13 @@ def main():
     parser.add_argument('--stage2-epochs', type=int, default=50)
     parser.add_argument('--stage2-lr', type=float, default=0.0001)
     
+    # Continue from checkpoint
+    parser.add_argument('--continue-from', type=str, default=None,
+                       help='Continue Stage 2 from saved Stage 1 checkpoint')
+    
     # Common
-    parser.add_argument('--batch-size', type=int, default=4)
+    parser.add_argument('--batch-size', type=int, default=8,
+                       help='Batch size')
     parser.add_argument('--device', type=str, default=None)
     parser.add_argument('--save-dir', type=str, default='sanday/checkpoints_2stage')
     
@@ -345,29 +350,48 @@ def main():
     )
     print(f"\nModel parameters: {model.count_parameters():,}")
     
-    # Trainer
-    trainer = TwoStageTrainer(model, phonemes, device=device)
-    
     # Save dir
     save_dir = Path(args.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
     
-    # STAGE 1
-    trainer.train_stage1(
-        train_loader,
-        n_epochs=args.stage1_epochs,
-        lr=args.stage1_lr,
-        save_dir=str(save_dir),
-    )
-    
-    # STAGE 2
-    trainer.train_stage2(
-        train_loader,
-        val_loader,
-        n_epochs=args.stage2_epochs,
-        lr=args.stage2_lr,
-        save_dir=str(save_dir),
-    )
+    # Continue from checkpoint?
+    if args.continue_from:
+        print(f"\n📥 Loading checkpoint: {args.continue_from}")
+        checkpoint = torch.load(args.continue_from, map_location=device)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        print(f"✅ Loaded Stage 1 (best loss: {min(checkpoint['loss']):.4f})")
+        
+        # Skip Stage 1, go directly to Stage 2
+        trainer = TwoStageTrainer(model, phonemes, device=device)
+        
+        # STAGE 2
+        trainer.train_stage2(
+            train_loader,
+            val_loader,
+            n_epochs=args.stage2_epochs,
+            lr=args.stage2_lr,
+            save_dir=str(save_dir),
+        )
+    else:
+        # Trainer
+        trainer = TwoStageTrainer(model, phonemes, device=device)
+        
+        # STAGE 1
+        trainer.train_stage1(
+            train_loader,
+            n_epochs=args.stage1_epochs,
+            lr=args.stage1_lr,
+            save_dir=str(save_dir),
+        )
+        
+        # STAGE 2
+        trainer.train_stage2(
+            train_loader,
+            val_loader,
+            n_epochs=args.stage2_epochs,
+            lr=args.stage2_lr,
+            save_dir=str(save_dir),
+        )
     
     # Save history
     history_path = save_dir / 'training_history_2stage.json'
