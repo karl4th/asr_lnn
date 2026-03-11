@@ -157,3 +157,6 @@ class DREAMConfig:
 
     ltc_surprise_scale: float = 5.0
     """Scaling factor for surprise modulation of tau"""
+
+    use_coordination: bool = False
+    """Enable top-down modulation for coordinated DREAMStack"""

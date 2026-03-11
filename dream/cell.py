@@ -40,7 +40,8 @@ class DREAMCell(nn.Module):
     ...     h, state = cell(x, state)
     """
 
-    def __init__(self, config: DREAMConfig, freeze_fast_weights: bool = False):
+    def __init__(self, config: DREAMConfig, freeze_fast_weights: bool = False,
+                 use_coordination: bool = False):
         """
         Initialize DREAM cell.
 
@@ -52,10 +53,14 @@ class DREAMCell(nn.Module):
             If True, fast weights (U) are frozen during training.
             Use this for static base training phase.
             Set to False for inference/adaptation phase.
+        use_coordination : bool, default=False
+            If True, enables top-down modulation for coordinated DREAMStack.
+            Adds modulation projection and inter-layer prediction.
         """
         super().__init__()
         self.config = config
-        self.freeze_fast_weights = freeze_fast_weights  # NEW FLAG
+        self.freeze_fast_weights = freeze_fast_weights
+        self.use_coordination = use_coordination  # NEW FLAG
 
         # ================================================================
         # BLOCK 1: Predictive Coding (Spec Section 2)
@@ -98,7 +103,20 @@ class DREAMCell(nn.Module):
         # tau_sys: base system time constant
         self.tau_sys = nn.Parameter(torch.tensor(config.ltc_tau_sys))
         # tau_surprise_scale: how much surprise affects tau
-        self.tau_surprise_scale = config.ltc_surprise_scale
+        self.tau_surprise_scale = nn.Parameter(torch.tensor(config.ltc_surprise_scale))
+
+        # ================================================================
+        # COORDINATION: Top-Down Modulation (NEW)
+        # ================================================================
+        if use_coordination:
+            # Modulation projection: generates top-down modulation vector
+            self.W_mod = nn.Parameter(torch.randn(config.hidden_dim, config.hidden_dim) * 0.01)
+
+            # Inter-layer prediction: predicts lower layer activity
+            self.W_pred = nn.Parameter(torch.randn(config.hidden_dim, config.hidden_dim) * 0.01)
+        else:
+            self.register_buffer('W_mod', torch.zeros(1))
+            self.register_buffer('W_pred', torch.zeros(1))
 
         # ================================================================
         # BLOCK 5: Sleep Consolidation (Spec Section 5)
@@ -131,7 +149,8 @@ class DREAMCell(nn.Module):
     def compute_surprise(
         self,
         error: torch.Tensor,
-        state: DREAMState
+        state: DREAMState,
+        modulation_from_above: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """
         Compute surprise with adaptive threshold (Spec Section 3.2-3.3).
@@ -140,6 +159,20 @@ class DREAMCell(nn.Module):
         τ = τ_0 * (1 + α * H)  where H = entropy from error variance
 
         Uses relative error norm for better noise detection.
+
+        Parameters
+        ----------
+        error : torch.Tensor
+            Prediction error (batch, input_dim)
+        state : DREAMState
+            Current state containing error_var and adaptive_tau
+        modulation_from_above : torch.Tensor, optional
+            Top-down modulation vector from higher layer (batch, hidden_dim)
+
+        Returns
+        -------
+        torch.Tensor
+            Surprise values (batch,)
         """
         batch_size = error.shape[0]
         eps = 1e-6
@@ -156,18 +189,88 @@ class DREAMCell(nn.Module):
         # Adaptive threshold (Spec 3.3)
         # Use running mean of error norm as baseline for comparison
         baseline_error = state.error_mean.norm(dim=-1) + eps
-        
+
         # Relative surprise: how much does current error exceed expected?
         relative_error = error_norm / baseline_error
-        
+
         # Threshold based on entropy (uncertainty)
         tau = 1.0 + self.alpha * entropy  # Base threshold around 1.0 (relative)
-        
+
+        # Apply top-down modulation (COORDINATION)
+        if modulation_from_above is not None and self.use_coordination:
+            # Modulation reduces threshold (makes layer more sensitive)
+            modulation_strength = modulation_from_above.mean(dim=-1)  # (batch,)
+            tau = tau - self.kappa * modulation_strength
+
         # Surprise using relative error
         # gamma controls sensitivity: smaller = more sensitive
         surprise = torch.sigmoid((relative_error - tau) / (self.gamma * 2))
 
         return surprise, error_norm
+
+    def generate_modulation(self, h: torch.Tensor) -> torch.Tensor:
+        """
+        Generate top-down modulation vector for lower layer.
+
+        Parameters
+        ----------
+        h : torch.Tensor
+            Hidden state of current layer (batch, hidden_dim)
+
+        Returns
+        -------
+        torch.Tensor
+            Modulation vector (batch, hidden_dim) in range [0, 1]
+        """
+        if not self.use_coordination:
+            return torch.ones_like(h)  # No modulation
+
+        # Project and squash to [0, 1]
+        modulation = torch.sigmoid(h @ self.W_mod)
+        return modulation
+
+    def predict_lower_activity(self, h: torch.Tensor) -> torch.Tensor:
+        """
+        Predict lower layer's hidden state.
+
+        Parameters
+        ----------
+        h : torch.Tensor
+            Hidden state of current layer (batch, hidden_dim)
+
+        Returns
+        -------
+        torch.Tensor
+            Predicted lower layer activity (batch, hidden_dim)
+        """
+        if not self.use_coordination:
+            return h  # No prediction
+
+        # Project to lower layer space
+        prediction = h @ self.W_pred
+        return prediction
+
+    def compute_inter_layer_error(
+        self,
+        prediction: torch.Tensor,
+        actual: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Compute inter-layer prediction error.
+
+        Parameters
+        ----------
+        prediction : torch.Tensor
+            Predicted lower layer activity
+        actual : torch.Tensor
+            Actual lower layer activity
+
+        Returns
+        -------
+        torch.Tensor
+            Prediction error (batch, hidden_dim)
+        """
+        return actual - prediction
 
     def update_fast_weights(
         self,

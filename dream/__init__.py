@@ -26,6 +26,7 @@ from .state import DREAMState
 from .cell import DREAMCell
 from .statistics import RunningStatistics
 from .layer import DREAM, DREAMStack
+from .layer_coordinated import CoordinatedDREAMStack, UncoordinatedDREAMStack
 
 
 
