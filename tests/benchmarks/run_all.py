@@ -125,7 +125,7 @@ def main():
     parser.add_argument('--tests', type=str, default='1,2,3,4,5', help='Tests to run (default: 1,2,3,4,5)')
     parser.add_argument('--hidden-dim', type=int, default=256, help='Hidden dim for tests 1-3')
     parser.add_argument('--hidden-dims', type=int, nargs='+', default=[128, 128, 128], help='Hidden dims for tests 4-5')
-    parser.add_argument('--epochs', type=int, default=50, help='Epochs for tests 1,4')
+    parser.add_argument('--epochs', type=int, default=100, help='Epochs for tests 1,4')
     parser.add_argument('--seq-len', type=int, default=500, help='Seq len for test 5')
     parser.add_argument('--device', type=str, default=None, help='cuda/cpu')
     parser.add_argument('--output-dir', type=str, default='tests/benchmarks/results', help='Output directory')
