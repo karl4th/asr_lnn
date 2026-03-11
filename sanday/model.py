@@ -7,7 +7,7 @@ import torch.nn as nn
 from typing import Dict, Optional, Tuple
 
 from dream import CoordinatedDREAMStack, DREAMConfig
-from sanday.phonemes import EnglishPhonemes
+from .phonemes import EnglishPhonemes
 
 
 class SandayASR(nn.Module):
