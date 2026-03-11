@@ -308,8 +308,15 @@ def run_speaker_adaptation_test(
     output_file.parent.mkdir(parents=True, exist_ok=True)
     save_results = {
         name: {
-            'passed': data['passed'],
-            'metrics': data['metrics']
+            'passed': bool(data['passed']),  # Convert numpy bool to Python bool
+            'metrics': {
+                'baseline_loss': float(data['metrics']['baseline_loss']),
+                'max_post_switch': float(data['metrics']['max_post_switch']),
+                'male_loss': float(data['metrics']['male_loss']),
+                'adaptation_steps': int(data['metrics']['adaptation_steps']),
+                'surprise_spike': float(data['metrics']['surprise_spike']),
+                'surprise_responds': bool(data['metrics'].get('surprise_responds', False)),
+            }
         }
         for name, data in results.items()
     }

@@ -335,8 +335,15 @@ def run_noise_robustness_test(
     output_file.parent.mkdir(parents=True, exist_ok=True)
     save_results = {
         name: {
-            'passed': data['passed'],
-            'metrics': data['metrics']
+            'passed': bool(data['passed']),
+            'metrics': {
+                'clean_loss': float(data['metrics']['clean_loss']),
+                'noisy_loss_10db': float(data['metrics']['noisy_loss_10db']),
+                'noisy_loss_0db': float(data['metrics']['noisy_loss_0db']),
+                'loss_ratio_10db': float(data['metrics']['loss_ratio_10db']),
+                'loss_ratio_0db': float(data['metrics']['loss_ratio_0db']),
+                'surprise_responds': bool(data['metrics'].get('surprise_responds', False)),
+            }
         }
         for name, data in results.items()
     }
