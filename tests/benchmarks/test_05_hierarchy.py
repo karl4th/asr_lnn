@@ -43,7 +43,9 @@ def load_real_audio_data(
     
     features = []
     
-    for _, row in df.iterrows()[:n_files]:
+    for idx, row in df.iterrows():
+        if idx >= n_files:
+            break
         audio_file = Path(audio_dir) / f"{row['id']}.wav"
         if audio_file.exists():
             y, sr = librosa.load(str(audio_file), sr=target_sr)
