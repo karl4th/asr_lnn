@@ -496,8 +496,8 @@ def main():
                        help='Learning rate')
     parser.add_argument('--grad-clip', type=float, default=5.0,
                        help='Gradient clipping')
-    parser.add_argument('--num-workers', type=int, default=4,
-                       help='Number of data loading workers')
+    parser.add_argument('--num-workers', type=int, default=0,  # Changed from 4 to 0 (no workers = more stable)
+                       help='Number of data loading workers (0 = main process only)')
     
     # Output arguments
     parser.add_argument('--save-dir', type=str, default='sanday/checkpoints',
