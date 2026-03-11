@@ -1,118 +1,366 @@
 """
-Coordinated DREAMStack.
+Coordinated DREAMStack — Hierarchical Predictive Coding.
 
-Implements hierarchical coordination with:
-1. Bottom-up prediction errors
-2. Top-down modulation vectors
-3. Two-pass processing (feedforward + backward modulation)
-4. Hierarchical sleep consolidation
+Key features:
+1. Working Top-Down Modulation — реально влияет на пластичность
+2. Hierarchical Tau — верхние слои медленнее (интегрируют дольше)
+3. Inter-Layer Prediction — предсказания между слоями + loss
+
+Architecture:
+```
+Input → [Layer 0] → h₀ → [Layer 1] → h₁ → [Layer 2] → h₂
+          ↑  ↓         ↑  ↓         ↑  ↓
+       pred₀  mod₁  pred₁  mod₂  pred₂  mod₃
+          │              │              │
+          └──── error ───┴──── error ───┘
+                    ↓
+            inter_layer_loss
+```
+
+Usage:
+    from dream.layer_coordinated import CoordinatedDREAMStack
+    
+    model = CoordinatedDREAMStack(
+        input_dim=80,
+        hidden_dims=[128, 128, 128],
+        rank=16,
+        use_hierarchical_tau=True,
+        use_inter_layer_prediction=True
+    )
+    
+    output, states, losses = model(x, return_losses=True)
 """
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from typing import List, Optional, Tuple, Dict
-from .cell import DREAMCell
-from .config import DREAMConfig
-from .state import DREAMState
+from dataclasses import dataclass
+
+from dream import DREAMConfig, DREAMCell, DREAMState
 
 
-class CoordinatedDREAMStack(nn.Module):
+@dataclass
+class CoordinatedState:
+    """State for coordinated DREAMStack."""
+    layer_states: List[DREAMState]
+    predictions: List[torch.Tensor]
+    modulations: List[torch.Tensor]
+
+
+class CoordinatedDREAMCell(DREAMCell):
     """
-    Coordinated DREAM Stack with hierarchical processing.
+    DREAM Cell with coordination support.
 
-    Architecture:
-    - Multiple DREAM layers with coordination
-    - Bottom-up: prediction errors between layers
-    - Top-down: modulation vectors for sensitivity control
-    - Two-pass processing per timestep
-
-    Parameters
-    ----------
-    input_dim : int
-        Input dimension
-    hidden_dims : List[int]
-        Hidden dimensions for each layer
-    rank : int
-        Fast weights rank
-    dropout : float
-        Dropout between layers
+    Adds:
+    - Top-down modulation input (влияет на пластичность)
+    - Layer prediction output
+    - Hierarchical tau scaling
     """
 
     def __init__(
         self,
-        input_dim: int,
-        hidden_dims: List[int],
+        config: DREAMConfig,
+        layer_idx: int = 0,
+        num_layers: int = 1,
+        use_hierarchical_tau: bool = True
+    ):
+        super().__init__(config, use_coordination=True)
+        
+        self.layer_idx = layer_idx
+        self.num_layers = num_layers
+        self.use_hierarchical_tau = use_hierarchical_tau
+        
+        # Hierarchical tau: upper layers have larger tau (slower adaptation)
+        # Layer 0: factor=1.0, Layer 3: factor=2.5
+        if use_hierarchical_tau:
+            self.tau_depth_factor = 1.0 + 0.5 * layer_idx
+        else:
+            self.tau_depth_factor = 1.0
+        
+        # Prediction head: predict lower layer activity
+        self.prediction_head = nn.Linear(config.hidden_dim, config.hidden_dim)
+        
+        # Modulation head: generate top-down modulation
+        self.modulation_head = nn.Sequential(
+            nn.Linear(config.hidden_dim, config.hidden_dim),
+            nn.ReLU(),
+            nn.Linear(config.hidden_dim, config.hidden_dim),
+            nn.Sigmoid()  # Output in [0, 1]
+        )
+
+    def compute_ltc_update(
+        self,
+        h_prev: torch.Tensor,
+        u_eff: torch.Tensor,
+        surprise: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        LTC update with hierarchical tau.
+
+        Upper layers have larger tau → slower adaptation → longer integration.
+        """
+        if self.tau_sys.item() < 0.01:
+            return torch.tanh(u_eff)
+
+        # Apply depth factor to tau
+        tau_base = self.tau_sys * self.tau_depth_factor
+        
+        # Dynamic tau modulated by surprise
+        tau = tau_base / (1.0 + surprise * self.tau_surprise_scale)
+        tau = torch.clamp(tau, 0.01, 50.0)
+
+        # Euler integration
+        h_target = torch.tanh(u_eff)
+        dt_over_tau = self.dt / (tau.unsqueeze(1) + self.dt)
+        dt_over_tau = torch.clamp(dt_over_tau, 0.01, 0.5)
+
+        h_new = (1 - dt_over_tau) * h_prev + dt_over_tau * h_target
+        return h_new
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        state: DREAMState,
+        modulation_from_above: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, DREAMState, torch.Tensor, torch.Tensor]:
+        """
+        Forward pass with coordination.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input (batch, input_dim)
+        state : DREAMState
+            Cell state
+        modulation_from_above : torch.Tensor, optional
+            Top-down modulation from higher layer (batch, hidden_dim)
+
+        Returns
+        -------
+        h_new : torch.Tensor
+            New hidden state
+        state : DREAMState
+            Updated state
+        prediction : torch.Tensor
+            Prediction for lower layer
+        modulation : torch.Tensor
+            Top-down modulation for lower layer
+        """
+        batch_size = x.shape[0]
+
+        # ================================================================
+        # 1. Predictive Coding
+        # ================================================================
+        x_pred = torch.tanh(state.h @ self.C)
+        error = x - x_pred
+
+        # ================================================================
+        # 2. Surprise Gate WITH top-down modulation
+        # ================================================================
+        surprise, error_norm = self.compute_surprise(error, state, modulation_from_above)
+
+        # ================================================================
+        # 3. Fast Weights Update WITH modulation-enhanced plasticity
+        # ================================================================
+        # Modulation enhances plasticity: higher modulation → faster learning
+        if modulation_from_above is not None and self.use_coordination:
+            # Modulation is in [0, 1], scale to [0.5, 1.5]
+            plasticity_boost = 0.5 + modulation_from_above.mean(dim=-1, keepdim=True)
+            effective_eta = self.eta * plasticity_boost
+        else:
+            effective_eta = self.eta
+
+        # Update with effective plasticity
+        state = self._update_fast_weights_with_eta(
+            state.h, error, surprise, state, effective_eta
+        )
+
+        # ================================================================
+        # 4. Gain Modulation
+        # ================================================================
+        gain = 1.0 + self.kappa * surprise.unsqueeze(1)
+        base_effect = x @ self.B_base
+        u_eff = gain * base_effect
+
+        # Fast weights contribution
+        fast_effect = torch.bmm(state.U, self.V.T.unsqueeze(0).expand(batch_size, -1, -1))
+        fast_effect = torch.bmm(fast_effect, x.unsqueeze(2)).squeeze(2)
+        u_eff = u_eff + fast_effect * 0.1
+
+        # ================================================================
+        # 5. LTC Update WITH hierarchical tau
+        # ================================================================
+        h_ltc = self.compute_ltc_update(state.h, u_eff, surprise)
+        error_injection = error @ self.W
+        h_new = h_ltc + error_injection
+        h_new = h_new * 0.99 + state.h * 0.01
+
+        # ================================================================
+        # 6. Update Statistics
+        # ================================================================
+        state.error_mean = (1 - self.beta) * state.error_mean + self.beta * error
+        state.error_var = (1 - self.beta) * state.error_var + self.beta * (error - state.error_mean) ** 2
+        state.avg_surprise = (1 - self.beta_s) * state.avg_surprise + self.beta_s * surprise
+
+        # ================================================================
+        # 7. Generate Prediction & Modulation
+        # ================================================================
+        # Prediction for lower layer
+        prediction = self.prediction_head(h_new)
+        
+        # Top-down modulation for lower layer
+        modulation = self.modulation_head(h_new)
+
+        return h_new, state, prediction, modulation
+
+    def _update_fast_weights_with_eta(
+        self,
+        h_prev: torch.Tensor,
+        error: torch.Tensor,
+        surprise: torch.Tensor,
+        state: DREAMState,
+        effective_eta: torch.Tensor
+    ) -> DREAMState:
+        """Update fast weights with custom eta."""
+        if self.freeze_fast_weights:
+            return state
+
+        batch_size = h_prev.shape[0]
+
+        # Hebbian term
+        eV = error @ self.V
+        hebbian = state.h.unsqueeze(2) * eV.unsqueeze(1)
+
+        # Plasticity modulation with effective eta
+        plasticity = effective_eta.unsqueeze(0) * surprise.unsqueeze(1)
+        plasticity = plasticity.unsqueeze(2)
+
+        # Forgetting term
+        forgetting = -self.forgetting_rate * (state.U - state.U_target)
+
+        # Full update
+        dU = forgetting + plasticity * hebbian
+        U_new = state.U + dU * self.dt
+
+        # Normalization
+        U_norm = U_new.norm(dim=(1, 2), keepdim=True)
+        scale = (self.target_norm / (U_norm + 1e-6)).clamp(max=2.0)
+        state.U = U_new * scale
+
+        return state
+
+
+class CoordinatedDREAMStack(nn.Module):
+    """
+    Coordinated DREAMStack with hierarchical predictive coding.
+
+    Features:
+    - Top-down modulation that реально влияет на пластичность
+    - Hierarchical tau (верхние слои медленнее)
+    - Inter-layer prediction loss
+    """
+
+    def __init__(
+        self,
+        input_dim: int = 80,
+        hidden_dims: List[int] = None,
         rank: int = 16,
-        dropout: float = 0.1
+        dropout: float = 0.1,
+        use_hierarchical_tau: bool = True,
+        use_inter_layer_prediction: bool = True,
+        inter_layer_loss_weight: float = 0.1
     ):
         super().__init__()
+
+        if hidden_dims is None:
+            hidden_dims = [128, 128, 128]
 
         self.input_dim = input_dim
         self.hidden_dims = hidden_dims
         self.rank = rank
         self.num_layers = len(hidden_dims)
+        self.use_hierarchical_tau = use_hierarchical_tau
+        self.use_inter_layer_prediction = use_inter_layer_prediction
+        self.inter_layer_loss_weight = inter_layer_loss_weight
 
-        # Create layers with coordination enabled
-        self.layers = nn.ModuleList()
-
-        # First layer
-        config = DREAMConfig(
-            input_dim=input_dim,
-            hidden_dim=hidden_dims[0],
-            rank=rank,
-            use_coordination=True
-        )
-        self.layers.append(DREAMCell(config))
-
-        # Subsequent layers
-        for i in range(1, len(hidden_dims)):
+        # Create coordinated cells
+        self.cells = nn.ModuleList()
+        for i in range(self.num_layers):
+            input_dim_i = input_dim if i == 0 else hidden_dims[i-1]
             config = DREAMConfig(
-                input_dim=hidden_dims[i-1],
+                input_dim=input_dim_i,
                 hidden_dim=hidden_dims[i],
                 rank=rank,
                 use_coordination=True
             )
-            self.layers.append(DREAMCell(config))
-
-        # Store modulation buffers (initialized in forward)
-        self.num_coordination_layers = len(hidden_dims) - 1  # No modulation for top layer
+            cell = CoordinatedDREAMCell(
+                config,
+                layer_idx=i,
+                num_layers=self.num_layers,
+                use_hierarchical_tau=use_hierarchical_tau
+            )
+            self.cells.append(cell)
 
         # Dropout
         self.dropout = nn.Dropout(dropout) if dropout > 0 else None
 
-    def init_states(self, batch_size: int, device: Optional[torch.device] = None) -> List[DREAMState]:
+        # Output projection (to input dim for reconstruction)
+        self.output_projection = nn.Linear(hidden_dims[-1], input_dim)
+
+    def init_states(self, batch_size: int, device: Optional[torch.device] = None) -> CoordinatedState:
         """Initialize states for all layers."""
-        return [layer.init_state(batch_size, device=device) for layer in self.layers]
+        layer_states = [
+            cell.init_state(batch_size, device=device)
+            for cell in self.cells
+        ]
+        
+        # Initialize predictions and modulations as zeros
+        predictions = [
+            torch.zeros(batch_size, h, device=device)
+            for h in self.hidden_dims
+        ]
+        modulations = [
+            torch.zeros(batch_size, h, device=device)
+            for h in self.hidden_dims
+        ]
+
+        return CoordinatedState(
+            layer_states=layer_states,
+            predictions=predictions,
+            modulations=modulations
+        )
 
     def forward(
         self,
         x: torch.Tensor,
-        states: Optional[List[DREAMState]] = None,
-        return_all: bool = False
-    ) -> Tuple[torch.Tensor, List[DREAMState], Dict]:
+        states: Optional[CoordinatedState] = None,
+        return_losses: bool = False
+    ) -> Tuple[torch.Tensor, CoordinatedState, Optional[Dict]]:
         """
-        Forward pass with two-pass coordination.
+        Forward pass through coordinated stack.
 
-        Pass 1: Feedforward (bottom-up, no modulation)
-        Pass 2: Backward modulation (top-down, for next timestep)
+        Two-pass processing:
+        1. Bottom-up: process input, compute predictions
+        2. Top-down: apply modulations
 
         Parameters
         ----------
         x : torch.Tensor
             Input (batch, time, input_dim)
-        states : List[DREAMState], optional
-            States for each layer
-        return_all : bool
-            Return all timesteps
+        states : CoordinatedState, optional
+            Coordinated states
+        return_losses : bool
+            Return inter-layer prediction losses
 
         Returns
         -------
         output : torch.Tensor
-            Output from final layer
-        states : List[DREAMState]
-            Final states for each layer
-        coordination_info : Dict
-            Information about coordination (modulations, errors)
+            Output (batch, time, input_dim)
+        states : CoordinatedState
+            Updated states
+        losses : dict, optional
+            Prediction losses
         """
         batch_size, time_steps, _ = x.shape
         device = x.device
@@ -120,31 +368,42 @@ class CoordinatedDREAMStack(nn.Module):
         if states is None:
             states = self.init_states(batch_size, device)
 
-        # Storage for coordination info
-        coordination_info = {
-            'modulations': [],  # Top-down modulations
-            'inter_layer_errors': []  # Prediction errors between layers
-        }
+        losses = {'reconstruction': 0.0, 'inter_layer': 0.0} if return_losses else None
 
-        if return_all:
-            all_outputs = []
-
-        # Initialize modulation buffers (for next timestep)
-        modulations = [None] * self.num_layers  # Top-down modulations
-
+        # Process sequence
         for t in range(time_steps):
             x_t = x[:, t, :]  # (batch, input_dim)
 
             # ================================================================
-            # PASS 1: Feedforward (bottom-up, no modulation yet)
+            # BOTTOM-UP PASS
             # ================================================================
             layer_outputs = []
             current_input = x_t
 
-            for i, layer in enumerate(self.layers):
-                # Process layer
-                h_new, states[i] = layer(current_input, states[i])
+            for i, cell in enumerate(self.cells):
+                # Get modulation from layer above (None for top layer)
+                modulation = states.modulations[i+1] if i < self.num_layers - 1 else None
+
+                # Forward through cell
+                h_new, states.layer_states[i], prediction, modulation_out = cell(
+                    current_input,
+                    states.layer_states[i],
+                    modulation
+                )
+
                 layer_outputs.append(h_new)
+                states.predictions[i] = prediction
+                states.modulations[i] = modulation_out
+
+                # Compute inter-layer prediction loss
+                if self.use_inter_layer_prediction and return_losses and i > 0:
+                    # Prediction from layer i for layer i-1
+                    pred_lower = states.predictions[i]
+                    # Actual output from layer i-1
+                    actual_lower = layer_outputs[i-1]
+                    # Prediction error
+                    inter_error = F.mse_loss(pred_lower, actual_lower)
+                    losses['inter_layer'] = losses['inter_layer'] + inter_error
 
                 # Prepare input for next layer
                 if i < self.num_layers - 1:
@@ -152,105 +411,30 @@ class CoordinatedDREAMStack(nn.Module):
                     if self.dropout is not None:
                         current_input = self.dropout(current_input)
 
-            # ================================================================
-            # PASS 2: Backward Modulation (top-down, for next timestep)
-            # ================================================================
-            # Generate modulations from top to bottom
-            for i in range(self.num_layers - 1, 0, -1):
-                # Upper layer generates modulation for lower layer
-                upper_h = layer_outputs[i]
-                modulation = self.layers[i].generate_modulation(upper_h)
-                modulations[i - 1] = modulation
+            # Reconstruction loss (top layer output → input)
+            if return_losses:
+                recon = self.output_projection(layer_outputs[-1])
+                losses['reconstruction'] = F.mse_loss(recon, x_t)
 
-                # Compute inter-layer prediction error
-                upper_pred = self.layers[i].predict_lower_activity(upper_h)
-                lower_actual = layer_outputs[i - 1]
-                inter_error = self.layers[i].compute_inter_layer_error(upper_pred, lower_actual)
+        # Final output projection
+        final_output = layer_outputs[-1]
+        output = self.output_projection(final_output)
 
-                if t == 0:  # Only store first timestep for memory efficiency
-                    coordination_info['inter_layer_errors'].append(inter_error.detach())
+        return output, states, losses
 
-            # Store final output
-            if return_all:
-                all_outputs.append(layer_outputs[-1].unsqueeze(1))
-
-            # Store modulations for coordination info
-            if t == 0:
-                coordination_info['modulations'] = [m.detach() if m is not None else None
-                                                    for m in modulations]
-
-        if return_all:
-            output = torch.cat(all_outputs, dim=1)
-        else:
-            output = layer_outputs[-1]
-
-        return output, states, coordination_info
-
-    def forward_with_global_sleep(
+    def forward_sequence(
         self,
         x: torch.Tensor,
-        states: Optional[List[DREAMState]] = None
-    ) -> Tuple[torch.Tensor, List[DREAMState], float]:
-        """
-        Forward pass with hierarchical sleep consolidation.
-
-        All layers consolidate together when global surprise is high.
-
-        Parameters
-        ----------
-        x : torch.Tensor
-            Input (batch, time, input_dim)
-        states : List[DREAMState], optional
-            States for each layer
-
-        Returns
-        -------
-        output : torch.Tensor
-            Output from final layer
-        states : List[DREAMState]
-            Final states for each layer
-        global_surprise : float
-            Average surprise across all layers
-        """
-        batch_size, time_steps, _ = x.shape
-
-        if states is None:
-            states = self.init_states(batch_size, device=x.device)
-
-        # Track surprises across layers
-        all_surprises = []
-
-        for t in range(time_steps):
-            x_t = x[:, t, :]
-            layer_outputs = []
-            current_input = x_t
-
-            # Forward pass
-            for i, layer in enumerate(self.layers):
-                h_new, states[i] = layer(current_input, states[i])
-                layer_outputs.append(h_new)
-
-                # Track surprise
-                if hasattr(states[i], 'avg_surprise'):
-                    all_surprises.append(states[i].avg_surprise.mean().item())
-
-                # Prepare input for next layer
-                if i < self.num_layers - 1:
-                    current_input = h_new
-                    if self.dropout is not None:
-                        current_input = self.dropout(current_input)
-
-        # Compute global surprise
-        global_surprise = sum(all_surprises) / len(all_surprises) if all_surprises else 0.0
-
-        # Hierarchical sleep: all layers consolidate together
-        if global_surprise > self.layers[0].S_min:
-            for layer in self.layers:
-                # Trigger sleep consolidation in each layer
-                # (This happens automatically in forward pass when surprise is high)
-                pass
-
-        return layer_outputs[-1], states, global_surprise
+        states: Optional[CoordinatedState] = None,
+        return_all: bool = True
+    ) -> Tuple[torch.Tensor, CoordinatedState]:
+        """Process full sequence (compatibility with existing code)."""
+        output, states, _ = self.forward(x, states, return_losses=False)
+        
+        if return_all:
+            return output, states
+        else:
+            return output[:, -1, :], states
 
     def count_parameters(self) -> int:
         """Count trainable parameters."""
@@ -286,7 +470,7 @@ class UncoordinatedDREAMStack(nn.Module):
                 input_dim=input_dim_i,
                 hidden_dim=h,
                 rank=rank,
-                use_coordination=False  # No coordination
+                use_coordination=False
             )
             self.layers.append(DREAMCell(config))
 

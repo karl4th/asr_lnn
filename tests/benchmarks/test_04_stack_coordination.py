@@ -26,7 +26,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from benchmarks.utils import load_audio_files, pad_sequences
-from dream.layer_coordinated import CoordinatedDREAMStack, UncoordinatedDREAMStack
+from dream.layer_coordinated import CoordinatedDREAMStack, UncoordinatedDREAMStack, CoordinatedState
 from dream.config import DREAMConfig
 
 
@@ -53,81 +53,58 @@ def train_stack(
         optimizer, mode='min', factor=0.5, patience=5
     )
 
-    history = {'loss': [], 'global_surprise': []}
+    history = {'loss': [], 'inter_layer_loss': []}
     batch_size = train_data.shape[0]
-    states = model.init_states(batch_size, device=device) if hasattr(model, 'init_states') else model.init_state(batch_size, device=device)
+    states = model.init_states(batch_size, device=device)
 
     print(f"Training {model.__class__.__name__} on {train_data.shape}...")
 
     for epoch in range(n_epochs):
         optimizer.zero_grad()
         total_loss = 0.0
+        total_inter_loss = 0.0
         n_segments = 0
-        surprises = []
 
         seq_len = train_data.shape[1]
         for start in range(0, seq_len, segment_size):
             end = min(start + segment_size, seq_len)
             segment = train_data[:, start:end, :].to(device)
 
-            # Forward pass
-            if hasattr(model, 'forward_with_global_sleep'):
-                recon, states, coord_info = model.forward_with_global_sleep(segment, states)
-            elif hasattr(model, 'forward') and callable(getattr(model, 'forward')):
-                # Try to get return_all=True for sequence output
-                try:
-                    output = model(segment, states, return_all=True) if hasattr(model, 'init_states') else model(segment, return_all=True)
-                except TypeError:
-                    output = model(segment, states) if hasattr(model, 'init_states') else model(segment)
-                    
-                if isinstance(output, tuple):
-                    recon, states = output
-                else:
-                    recon = output
+            # Forward pass with losses
+            if isinstance(model, CoordinatedDREAMStack):
+                recon, states, losses = model(segment, states, return_losses=True)
+                loss = losses['reconstruction'] + model.inter_layer_loss_weight * losses['inter_layer']
+                total_inter_loss += losses['inter_layer'].item()
             else:
-                recon, states = model(segment, states)
+                recon, states = model(segment, states, return_all=True)
+                loss = criterion(recon, segment)
 
-            # Ensure recon has same shape as segment (batch, time, input_dim)
-            if len(recon.shape) == 2:
-                # Only last timestep returned, need all timesteps
-                # For now, expand to match
-                recon = recon.unsqueeze(1).expand(-1, segment.shape[1], -1)
-            
-            if recon.shape[-1] != segment.shape[-1]:
-                # Project to input dim
-                if not hasattr(model, 'decoder'):
-                    model.decoder = nn.Linear(recon.shape[-1], segment.shape[-1]).to(device)
-                recon = model.decoder(recon)
-
-            loss = criterion(recon, segment)
             loss.backward()
 
             total_loss += loss.item()
             n_segments += 1
 
             # Detach states
-            if isinstance(states, list):
+            if isinstance(states, CoordinatedState):
+                for i in range(len(states.layer_states)):
+                    states.layer_states[i] = states.layer_states[i].detach()
+            else:
                 for i in range(len(states)):
-                    if hasattr(states[i], 'detach'):
-                        states[i] = states[i].detach()
-            elif hasattr(states, 'detach'):
-                states = states.detach()
+                    states[i] = states[i].detach()
 
         # Gradient clipping
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
 
         avg_loss = total_loss / n_segments
+        avg_inter_loss = total_inter_loss / n_segments
         scheduler.step(avg_loss)
 
         history['loss'].append(avg_loss)
-        if surprises:
-            history['global_surprise'].append(sum(surprises) / len(surprises))
-        else:
-            history['global_surprise'].append(0.0)
+        history['inter_layer_loss'].append(avg_inter_loss)
 
         if (epoch + 1) % 10 == 0:
-            print(f"  Epoch {epoch+1}/{n_epochs}: Loss={avg_loss:.6f}")
+            print(f"  Epoch {epoch+1}/{n_epochs}: Loss={avg_loss:.6f}, Inter={avg_inter_loss:.6f}")
 
     return history
 
@@ -250,6 +227,7 @@ def run_coordination_test(
         'final_loss': final_loss,
         'improvement_pct': improvement,
         'train_time': train_time,
+        'inter_layer_loss': history_coord['inter_layer_loss'][-1] if history_coord['inter_layer_loss'] else 0,
         'history': history_coord,
     }
 
@@ -267,14 +245,14 @@ def run_coordination_test(
     print("COMPARISON")
     print("=" * 70)
 
-    print(f"\n| Model          | Final Loss | Improvement | Time |")
-    print(f"|----------------|------------|-------------|------|")
-    print(f"| Uncoordinated  | {results['uncoordinated']['final_loss']:10.6f} | "
-          f"{results['uncoordinated']['improvement_pct']:10.1f}% | "
-          f"{results['uncoordinated']['train_time']:4.0f}s |")
-    print(f"| Coordinated    | {results['coordinated']['final_loss']:10.6f} | "
-          f"{results['coordinated']['improvement_pct']:10.1f}% | "
-          f"{results['coordinated']['train_time']:4.0f}s |")
+    print(f"\n| Model          | Final Loss | Inter Loss | Improvement | Time |")
+    print(f"|----------------|------------|------------|-------------|------|")
+    print(f"| Uncoordinated  | {results['uncoordinated']['final_loss']:10.6f} | {'N/A':10s} | "
+          f"{results['uncoordinated']['improvement_pct']:10.1f}% | {results['uncoordinated']['train_time']:4.0f}s |")
+    
+    coord_inter = results['coordinated'].get('inter_layer_loss', 0)
+    print(f"| Coordinated    | {results['coordinated']['final_loss']:10.6f} | {coord_inter:10.6f} | "
+          f"{results['coordinated']['improvement_pct']:10.1f}% | {results['coordinated']['train_time']:4.0f}s |")
 
     # Check if coordination helps
     coord_better = results['coordinated']['final_loss'] < results['uncoordinated']['final_loss'] * 0.9
@@ -304,6 +282,7 @@ def run_coordination_test(
                 'final_loss': results['coordinated']['final_loss'],
                 'improvement_pct': results['coordinated']['improvement_pct'],
                 'train_time': results['coordinated']['train_time'],
+                'inter_layer_loss': results['coordinated'].get('inter_layer_loss', 0),
             }
         },
         'summary': results['summary'],
