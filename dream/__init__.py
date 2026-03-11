@@ -30,7 +30,7 @@ from .layer_coordinated import CoordinatedDREAMStack, UncoordinatedDREAMStack, C
 
 
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 __all__ = [
     # Config & State
     "DREAMConfig",

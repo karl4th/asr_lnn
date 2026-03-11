@@ -219,25 +219,48 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ## Benchmarks
 
-DREAM превосходит LSTM и Transformer на задачах обработки аудио:
+DREAM outperforms LSTM and Transformer on audio processing tasks (v0.1.4):
 
-| Модель | Параметры | ASR Improvement | Adaptation Steps | Noise Ratio |
-|--------|-----------|-----------------|------------------|-------------|
-| **DREAM** | 82K | **99.9%** | **0** | **1.09×** |
-| LSTM | 893K | 93.9% | 0 | 1.09× |
-| Transformer | 551K | 92.6% | 0 | 1.07× |
+| Model | Parameters | ASR Improvement | Adaptation Steps | Noise Ratio (10dB) |
+|--------|-----------|-----------------|------------------|-------------------|
+| **DREAM** | 82K | **99.3%** | **0** | **1.09×** |
+| LSTM | 893K | 83.7% | 0 | 1.08× |
+| Transformer | 551K | 89.3% | 0 | 1.08× |
 
-**Результаты:**
-- ✅ 99.9% улучшение reconstruction loss (100 эпох)
-- ✅ Мгновенная адаптация к смене диктора (<50 шагов)
-- ✅ Стабильность к шуму (1.09× при 10dB SNR)
+### HARD MODE Results (v0.1.4)
 
-Запуск бенчмарков:
+**Test 1: ASR Reconstruction**
+- ✅ DREAM: 99.3% improvement (vs 83.7% LSTM, 89.3% Transformer)
+- ✅ 10.8x fewer parameters than LSTM
+
+**Test 2: Speaker Adaptation (Cross-Gender HARD MODE)**
+- ✅ DREAM: 0 adaptation steps (Female → Male voice)
+- ✅ Surprise spike: 0.089 (detects speaker change)
+- Spec: <100 steps for cross-gender
+
+**Test 3: Noise Robustness (Extended SNR HARD MODE)**
+- ✅ DREAM: 1.09x loss ratio at 10dB SNR
+- ✅ 2.00x loss ratio at 0dB SNR (very noisy)
+- ✅ Graceful degradation under noise
+
+**Test 4: Stack Coordination**
+- ✅ Coordinated DREAMStack: 36% better final loss
+- ✅ 10% faster training (197s vs 219s)
+- ✅ Inter-layer prediction working
+
+**Test 5: Temporal Hierarchy (REAL Audio)**
+- ✅ Emergent hierarchy confirmed
+- ✅ Tau ratio: 2.05x (top layer integrates 2x longer)
+- ✅ Layer 0: 6.9ms (phonemes) → Layer 2: 1418ms (words)
+
+**All 5 tests PASS!** 🎉
+
+Run benchmarks:
 ```bash
-uv run python tests/benchmarks/run_all.py
+uv run python tests/benchmarks/run_all.py --audio-dir /path/to/LJSpeech-1.1 --epochs 50
 ```
 
-См. `second.md` и `TECHNICAL_REPORT.md` для деталей.
+See `documentation_en_v0_1_4.md` and `CHANGELOG.md` for details.
 
 ## Citation
 
@@ -247,6 +270,6 @@ uv run python tests/benchmarks/run_all.py
   author = {Manifestro Team},
   year = {2026},
   url = {https://github.com/karl4th/dream-nn},
-  version = "0.1.3"
+  version = "0.1.4"
 }
 ```
