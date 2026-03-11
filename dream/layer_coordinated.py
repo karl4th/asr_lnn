@@ -165,8 +165,8 @@ class CoordinatedDREAMCell(DREAMCell):
         # ================================================================
         # Modulation enhances plasticity: higher modulation → faster learning
         if modulation_from_above is not None and self.use_coordination:
-            # Modulation is in [0, 1], scale to [0.5, 1.5]
-            plasticity_boost = 0.5 + modulation_from_above.mean(dim=-1, keepdim=True)
+            # Modulation is in [0, 1], project to scalar boost
+            plasticity_boost = 0.5 + modulation_from_above.mean()  # Scalar
             effective_eta = self.eta * plasticity_boost
         else:
             effective_eta = self.eta
