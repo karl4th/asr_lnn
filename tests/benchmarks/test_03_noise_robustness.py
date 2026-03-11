@@ -1,9 +1,15 @@
 """
-Test 3: Noise Robustness.
+Test 3: Noise Robustness (HARD MODE).
 
 Based on DREAM Architecture Specification Section 7.2.3.
 
 Tests the model's robustness to additive noise at different SNR levels.
+
+HARD MODE:
+- Uses both female (LJSpeech) and male (manifestro-cv-08060.wav) voices
+- Tests noise at multiple levels: 20, 15, 10, 5, 0, -5 dB
+- Checks if surprise gate detects noise increase
+- Measures graceful degradation, not just pass/fail
 
 Expected Results (Spec 7.5):
 - DREAM: Surprise gate filters constant noise, stable performance
@@ -30,17 +36,41 @@ from benchmarks.utils import load_audio_files, pad_sequences, add_noise, Benchma
 from benchmarks.models import create_model
 
 
+# Path to male voice file
+MALE_VOICE_FILE = Path(__file__).parent.parent.parent / "manifestro-cv-08060.wav"
+
+
+def load_male_voice(target_sr: int = 16000, n_mels: int = 80):
+    """Load and preprocess male voice file."""
+    if not MALE_VOICE_FILE.exists():
+        raise FileNotFoundError(f"Male voice file not found: {MALE_VOICE_FILE}")
+    
+    y, sr = librosa.load(str(MALE_VOICE_FILE), sr=target_sr)
+    
+    # Take first 10 seconds
+    segment_samples = target_sr * 10
+    segment = y[:segment_samples]
+    
+    melspec = librosa.feature.melspectrogram(y=segment, sr=sr, n_mels=n_mels)
+    log_mels = librosa.power_to_db(melspec, ref=np.max)
+    feat = torch.tensor(log_mels.T, dtype=torch.float32)
+    feat = (feat - feat.mean()) / (feat.std() + 1e-6)
+    
+    return feat.unsqueeze(0)  # (1, time, 80)
+
+
 def test_noise_robustness(
     model: nn.Module,
     model_name: str,
     test_data: torch.Tensor,
-    snr_levels: List[float] = [20, 10, 5, 0],
+    snr_levels: List[float] = [20, 15, 10, 5, 0, -5],
     device: str = 'cpu'
 ) -> dict:
     """
     Test model robustness to additive noise.
 
     Measures reconstruction loss and surprise response at each SNR level.
+    HARD MODE: Extended SNR range including negative SNR (-5 dB)
     """
     model.eval()
     criterion = nn.MSELoss()
@@ -137,29 +167,39 @@ def run_noise_robustness_test(
     hidden_dim: int = 256,
     device: Optional[str] = None
 ) -> dict:
-    """Run noise robustness test."""
+    """Run noise robustness test (HARD MODE)."""
     if device is None:
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     print("=" * 70)
-    print("DREAM Benchmark - Test 3: Noise Robustness")
+    print("DREAM Benchmark - Test 3: Noise Robustness (HARD MODE)")
     print("=" * 70)
+    print("\nHARD MODE: Extended SNR (20 to -5 dB), both voices")
 
-    # Load data
-    print("\nLoading audio files...")
+    # Load female data (LJSpeech)
+    print("\nLoading female voice files (LJSpeech)...")
     if metadata_path:
         features = load_audio_files_from_metadata(metadata_path, audio_dir)
     else:
         features = load_audio_files(audio_dir)
-    print(f"Loaded {len(features)} files")
+    print(f"Loaded {len(features)} female files")
 
-    # Use last file for testing
-    test_data = pad_sequences(features[-1:]) if features else torch.zeros(1, 100, 80)
-    print(f"Test data: {test_data.shape}")
+    # Load male voice
+    print("\nLoading male voice (manifestro-cv-08060.wav)...")
+    try:
+        male_data = load_male_voice()
+        print(f"Male voice: {male_data.shape}")
+    except FileNotFoundError:
+        print("⚠️  Male voice not found, using female only")
+        male_data = None
+
+    # Use multiple test samples
+    female_data = pad_sequences(features[-1:]) if features else torch.zeros(1, 100, 80)
+    print(f"Female test data: {female_data.shape}")
 
     results = {}
     models_to_test = ['dream', 'lstm', 'transformer']
-    snr_levels = [20, 10, 5, 0]
+    snr_levels = [20, 15, 10, 5, 0, -5]  # Extended range
 
     for model_name in models_to_test:
         print(f"\n{'='*50}")
@@ -176,70 +216,100 @@ def run_noise_robustness_test(
 
         model = model.to(device)
 
-        # Test noise robustness
-        noise_results = test_noise_robustness(
-            model, model_name, test_data, snr_levels, device
-        )
+        # Test on both voices
+        all_noise_results = {}
+        for voice_name, test_data in [('female', female_data), ('male', male_data)]:
+            if test_data is None:
+                continue
+            
+            print(f"\n  Testing on {voice_name} voice...")
+            
+            # Test noise robustness
+            noise_results = test_noise_robustness(
+                model, model_name, test_data, snr_levels, device
+            )
+            all_noise_results[voice_name] = noise_results
+
+        # Average results across voices
+        if len(all_noise_results) > 1:
+            # Average metrics
+            avg_results = {}
+            for snr in snr_levels:
+                avg_results[snr] = {
+                    'full_loss': np.mean([all_noise_results[v][snr]['full_loss'] for v in all_noise_results]),
+                    'avg_step_loss': np.mean([all_noise_results[v][snr]['avg_step_loss'] for v in all_noise_results]),
+                    'max_step_loss': np.mean([all_noise_results[v][snr]['max_step_loss'] for v in all_noise_results]),
+                    'max_surprise': np.mean([all_noise_results[v][snr]['max_surprise'] for v in all_noise_results]) if model_name == 'dream' else 0,
+                }
+            noise_results = avg_results
+        else:
+            noise_results = list(all_noise_results.values())[0]
 
         # Print results
-        print(f"\nResults by SNR:")
+        print(f"\nResults by SNR (averaged across voices):")
         print(f"  SNR | Loss    | Max Loss | Max Surprise")
         print(f"  ----|---------|----------|-------------")
 
         for snr in snr_levels:
             r = noise_results[snr]
             surprise_str = f"{r['max_surprise']:.3f}" if r['max_surprise'] > 0 else "N/A"
-            print(f"  {snr:3d} | {r['full_loss']:7.4f} | {r['max_step_loss']:8.4f} | {surprise_str:>12}")
+            print(f"  {snr:4.0f} | {r['full_loss']:7.4f} | {r['max_step_loss']:8.4f} | {surprise_str:>12}")
 
-        # Success criteria
+        # Success criteria (HARD MODE: more realistic)
         clean_loss = noise_results[20]['full_loss']
-        noisy_loss = noise_results[10]['full_loss']
+        noisy_loss_10db = noise_results[10]['full_loss']
+        noisy_loss_0db = noise_results[0]['full_loss']
 
         # Check if surprise responds to noise (DREAM only)
         surprise_responds = False
         if model_name == 'dream':
             # Check if surprise increases with noise level
             clean_surprise = noise_results[20]['max_surprise']
-            noisy_surprise = noise_results[0]['max_surprise']  # Compare with highest noise
+            noisy_surprise = noise_results[-5]['max_surprise']  # Compare with highest noise
             # Surprise should increase as noise increases
             surprise_responds = noisy_surprise > clean_surprise * 1.05  # At least 5% increase
 
-        # Loss should not explode at moderate noise
-        loss_stable = noisy_loss < clean_loss * 3.0
+        # Loss should not explode at moderate noise (graceful degradation)
+        loss_stable_10db = noisy_loss_10db < clean_loss * 2.0
+        loss_stable_0db = noisy_loss_0db < clean_loss * 3.0
 
-        passed = loss_stable or surprise_responds
+        # Passed if loss is stable OR surprise responds
+        passed = (loss_stable_10db and loss_stable_0db) or surprise_responds
 
         results[model_name] = {
             'passed': passed,
             'metrics': {
                 'clean_loss': clean_loss,
-                'noisy_loss_10db': noisy_loss,
-                'loss_ratio': noisy_loss / (clean_loss + 1e-6),
+                'noisy_loss_10db': noisy_loss_10db,
+                'noisy_loss_0db': noisy_loss_0db,
+                'loss_ratio_10db': noisy_loss_10db / (clean_loss + 1e-6),
+                'loss_ratio_0db': noisy_loss_0db / (clean_loss + 1e-6),
                 'surprise_responds': surprise_responds,
             },
             'full_results': noise_results,
         }
 
-        print(f"\n  Clean Loss:     {clean_loss:.4f}")
-        print(f"  Noisy Loss:     {noisy_loss:.4f}")
-        print(f"  Loss Ratio:     {noisy_loss / (clean_loss + 1e-6):.2f}x")
+        print(f"\n  Clean Loss (20dB):  {clean_loss:.4f}")
+        print(f"  Noisy Loss (10dB):  {noisy_loss_10db:.4f}")
+        print(f"  Noisy Loss (0dB):   {noisy_loss_0db:.4f}")
+        print(f"  Loss Ratio (10dB):  {noisy_loss_10db / (clean_loss + 1e-6):.2f}x")
         if model_name == 'dream':
-            print(f"  Surprise Response: {'✅ Yes' if surprise_responds else '❌ No'}")
+            print(f"  Surprise Responds:  {'✅ Yes' if surprise_responds else '❌ No'}")
         print(f"  {'✅ PASSED' if passed else '❌ FAILED'}")
 
     # Summary
     print("\n" + "=" * 70)
     print("SUMMARY")
     print("=" * 70)
-    print(f"\n| Model | Clean Loss | 10dB Loss | Ratio | Surprise |")
-    print(f"|-------|------------|-----------|-------|----------|")
+    print(f"\n| Model | Clean | 10dB | 0dB | 10dB Ratio | Surprise |")
+    print(f"|-------|-------|------|-----|------------|----------|")
 
     for name in models_to_test:
         m = results[name]['metrics']
         status = '✅' if results[name]['passed'] else '❌'
         surprise_str = '✅' if m.get('surprise_responds', False) else 'N/A'
-        print(f"| {name.upper():7} | {m['clean_loss']:10.4f} | {m['noisy_loss_10db']:9.4f} | "
-              f"{m['loss_ratio']:5.2f}x | {surprise_str:>8} | {status}")
+        print(f"| {name.upper():7} | {m['clean_loss']:5.3f} | {m['noisy_loss_10db']:5.3f} | {m['noisy_loss_0db']:5.3f} | "
+              f"{m['loss_ratio_10db']:8.2f}x | {surprise_str:>8} | {status}")
 
     # Key finding
     print("\n" + "=" * 70)
@@ -247,10 +317,12 @@ def run_noise_robustness_test(
     print("=" * 70)
 
     dream_responds = results['dream']['metrics'].get('surprise_responds', False)
-    dream_ratio = results['dream']['metrics']['loss_ratio']
+    dream_ratio_10db = results['dream']['metrics']['loss_ratio_10db']
+    dream_ratio_0db = results['dream']['metrics']['loss_ratio_0db']
 
     print(f"DREAM noise response:")
-    print(f"  - Loss ratio (10dB/clean): {dream_ratio:.2f}x")
+    print(f"  - Loss ratio (10dB/clean): {dream_ratio_10db:.2f}x")
+    print(f"  - Loss ratio (0dB/clean):  {dream_ratio_0db:.2f}x")
     print(f"  - Surprise detects noise:  {'✅ Yes' if dream_responds else '❌ No'}")
 
     if dream_responds:
