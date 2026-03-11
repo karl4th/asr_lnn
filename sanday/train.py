@@ -464,6 +464,9 @@ class SandayTrainer:
 
 
 def main():
+    import nltk
+    nltk.download('averaged_perceptron_tagger')
+    nltk.download('cmudict')
     parser = argparse.ArgumentParser(description='Train SANDAY phoneme recognizer')
     
     # Data arguments
