@@ -1,7 +1,7 @@
 """
 DREAM: Dynamic Recall and Elastic Adaptive Memory
 
-A PyTorch implementation of continuous-time RNN cells with:
+A modular continuous-time RNN with:
 - Surprise-driven plasticity
 - Liquid Time-Constants (LTC)
 - Fast weights with Hebbian learning
@@ -11,26 +11,29 @@ Example
 -------
 >>> from dream import DREAM, DREAMConfig, DREAMCell
 >>> model = DREAM(input_dim=64, hidden_dim=128, rank=8)
->>> x = torch.randn(4, 50, 64)  # (batch, time, features)
+>>> x = torch.randn(4, 50, 64)
 >>> output, state = model(x)
 
-ASR Module
-----------
->>> from dream.asr import DREAMASR, DREAMASRTrainer
->>> model = DREAMASR(input_dim=80, num_phonemes=72)
->>> probs, log_probs, _ = model(mel_spec, lengths)
+Coordination (optional)
+-----------------------
+>>> from dream import CoordinatedDREAMStack
+>>> model = CoordinatedDREAMStack(input_dim=80, hidden_dims=[128, 128, 128])
 """
 
 from .config import DREAMConfig
 from .state import DREAMState
 from .cell import DREAMCell
-from .statistics import RunningStatistics
-from .layer import DREAM, DREAMStack
-from .layer_coordinated import CoordinatedDREAMStack, UncoordinatedDREAMStack, CoordinatedDREAMCell, CoordinatedState
+from .layer import DREAM
+from .stack import DREAMStack
+from .layers import (
+    CoordinatedDREAMCell,
+    CoordinatedDREAMStack,
+    CoordinatedState,
+)
+from . import layers
 
+__version__ = "0.2.0"
 
-
-__version__ = "0.1.4"
 __all__ = [
     # Config & State
     "DREAMConfig",
@@ -38,9 +41,14 @@ __all__ = [
 
     # Core
     "DREAMCell",
-    "RunningStatistics",
+    "layers",
 
     # High-level API
     "DREAM",
     "DREAMStack",
+
+    # Coordination (optional)
+    "CoordinatedDREAMCell",
+    "CoordinatedDREAMStack",
+    "CoordinatedState",
 ]

@@ -1,33 +1,39 @@
-"""DREAM Cell: Dynamic Recall and Elastic Adaptive Memory.
+"""
+DREAM Cell - Modular implementation.
 
-Implementation based on NNAI-S Architecture Specification v0.1.
+Dynamic Recall and Elastic Adaptive Memory with pluggable blocks:
+- Predictive Coding (required)
+- Surprise Gate (required)
+- Fast Weights (optional)
+- Liquid Time-Constants (optional)
+- Sleep Consolidation (optional)
 """
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from typing import Tuple, Optional
 from .config import DREAMConfig
 from .state import DREAMState
+from .layers import PredictiveCoding, SurpriseGate, FastWeights, LiquidTimeConstants, SleepConsolidation
 
 
 class DREAMCell(nn.Module):
     """
     DREAM (Dynamic Recall and Elastic Adaptive Memory) cell.
 
-    A continuous-time RNN cell with:
-    - Predictive coding with fast weights
-    - Surprise-driven STDP plasticity
-    - Liquid Time-Constants (LTC) for adaptive integration
-    - Sleep consolidation for memory stabilization
+    A continuous-time RNN cell with modular blocks:
+    - Predictive Coding: prediction and error computation
+    - Surprise Gate: surprise-driven modulation
+    - Fast Weights: Hebbian learning with low-rank decomposition
+    - LTC: adaptive integration time constants
+    - Sleep: memory consolidation
 
-    Architecture follows NNAI-S spec:
-
-    1. Predictive Coding: x_hat = C @ h, e = x - x_hat
-    2. Surprise Gate: S = sigmoid((||e|| - τ) / γ)
-    3. Fast Weights: U updated via Hebbian learning modulated by S
-    4. State Update: h_new = LTC(h, B_eff @ x) + W @ e
-    5. Sleep: U_target consolidates U when surprise is high
+    Parameters
+    ----------
+    config : DREAMConfig
+        Model configuration
+    freeze_fast_weights : bool, default=False
+        If True, fast weights are frozen during training
 
     Examples
     --------
@@ -35,105 +41,74 @@ class DREAMCell(nn.Module):
     >>> config = DREAMConfig(input_dim=39, hidden_dim=256)
     >>> cell = DREAMCell(config)
     >>> state = cell.init_state(batch_size=32)
-    >>> for t in range(sequence_length):
-    ...     x = input_seq[:, t, :]
-    ...     h, state = cell(x, state)
+    >>> h, state = cell(x, state)
     """
 
-    def __init__(self, config: DREAMConfig, freeze_fast_weights: bool = False,
-                 use_coordination: bool = False):
-        """
-        Initialize DREAM cell.
-
-        Parameters
-        ----------
-        config : DREAMConfig
-            Model configuration
-        freeze_fast_weights : bool, default=False
-            If True, fast weights (U) are frozen during training.
-            Use this for static base training phase.
-            Set to False for inference/adaptation phase.
-        use_coordination : bool, default=False
-            If True, enables top-down modulation for coordinated DREAMStack.
-            Adds modulation projection and inter-layer prediction.
-        """
+    def __init__(self, config: DREAMConfig, freeze_fast_weights: bool = False):
         super().__init__()
         self.config = config
         self.freeze_fast_weights = freeze_fast_weights
-        self.use_coordination = use_coordination  # NEW FLAG
 
         # ================================================================
-        # BLOCK 1: Predictive Coding (Spec Section 2)
+        # Block 1: Predictive Coding (required)
         # ================================================================
-        # C: decoding matrix (hidden_dim -> input_dim)
-        self.C = nn.Parameter(torch.randn(config.hidden_dim, config.input_dim) * 0.1)
-        # W: error injection matrix (input_dim -> hidden_dim)
-        self.W = nn.Parameter(torch.randn(config.input_dim, config.hidden_dim) * 0.1)
-        # B_base: base input projection (input_dim -> hidden_dim)
-        self.B_base = nn.Parameter(torch.randn(config.input_dim, config.hidden_dim) * 0.1)
+        self.predictive_coding = PredictiveCoding(
+            input_dim=config.input_dim,
+            hidden_dim=config.hidden_dim
+        )
 
         # ================================================================
-        # BLOCK 2: Fast Weights (Spec Section 4)
+        # Block 2: Surprise Gate (required)
         # ================================================================
-        # V: fixed orthogonal sensory filter (input_dim, rank) per Spec 4.1
-        V_init = torch.randn(config.input_dim, config.rank)
-        # Orthogonalize via QR
-        Q, _ = torch.linalg.qr(V_init)
-        self.register_buffer('V', Q)  # Fixed, not learnable during inference
-
-        # U: fast weights left factor (batch, hidden_dim, rank) - in state
-        # eta: vector plasticity coefficient (hidden_dim,)
-        self.eta = nn.Parameter(torch.ones(config.hidden_dim) * config.base_plasticity)
+        self.surprise_gate = SurpriseGate(
+            hidden_dim=config.hidden_dim,
+            base_threshold=config.base_threshold,
+            entropy_influence=config.entropy_influence,
+            surprise_temperature=config.surprise_temperature,
+            kappa=config.kappa
+        )
 
         # ================================================================
-        # BLOCK 3: Surprise Gate (Spec Section 3)
+        # Block 3: Fast Weights (optional)
         # ================================================================
-        # tau_0: base threshold
-        self.tau_0 = nn.Parameter(torch.tensor(config.base_threshold))
-        # alpha: entropy influence
-        self.alpha = nn.Parameter(torch.tensor(config.entropy_influence))
-        # gamma: surprise temperature
-        self.gamma = nn.Parameter(torch.tensor(config.surprise_temperature))
-        # kappa: gain modulation for B
-        self.kappa = nn.Parameter(torch.tensor(config.kappa))
+        self.use_fast_weights = config.use_fast_weights
+        self.fast_weights = FastWeights(
+            hidden_dim=config.hidden_dim,
+            input_dim=config.input_dim,
+            rank=config.rank,
+            forgetting_rate=config.forgetting_rate,
+            base_plasticity=config.base_plasticity,
+            target_norm=config.target_norm,
+            time_step=config.time_step,
+            freeze_fast_weights=freeze_fast_weights
+        )
 
         # ================================================================
-        # BLOCK 4: Liquid Time-Constants (Spec Section 2.3)
+        # Block 4: Liquid Time-Constants (optional)
         # ================================================================
-        # tau_sys: base system time constant
-        self.tau_sys = nn.Parameter(torch.tensor(config.ltc_tau_sys))
-        # tau_surprise_scale: how much surprise affects tau
-        self.tau_surprise_scale = nn.Parameter(torch.tensor(config.ltc_surprise_scale))
+        self.use_ltc = config.use_ltc
+        self.ltc = LiquidTimeConstants(
+            ltc_tau_sys=config.ltc_tau_sys,
+            ltc_surprise_scale=config.ltc_surprise_scale,
+            time_step=config.time_step,
+            ltc_enabled=config.use_ltc
+        )
 
         # ================================================================
-        # COORDINATION: Top-Down Modulation (NEW)
+        # Block 5: Sleep Consolidation (optional)
         # ================================================================
-        if use_coordination:
-            # Modulation projection: generates top-down modulation vector
-            self.W_mod = nn.Parameter(torch.randn(config.hidden_dim, config.hidden_dim) * 0.01)
-
-            # Inter-layer prediction: predicts lower layer activity
-            self.W_pred = nn.Parameter(torch.randn(config.hidden_dim, config.hidden_dim) * 0.01)
-        else:
-            self.register_buffer('W_mod', torch.zeros(1))
-            self.register_buffer('W_pred', torch.zeros(1))
+        self.use_sleep = config.use_sleep
+        self.sleep = SleepConsolidation(
+            sleep_rate=config.sleep_rate,
+            min_surprise_for_sleep=config.min_surprise_for_sleep,
+            target_norm=config.target_norm
+        )
 
         # ================================================================
-        # BLOCK 5: Sleep Consolidation (Spec Section 5)
+        # Smoothing Parameters (for statistics)
         # ================================================================
-        self.sleep_rate = config.sleep_rate
-        self.S_min = config.min_surprise_for_sleep
-
-        # ================================================================
-        # Smoothing Parameters
-        # ================================================================
-        self.beta = config.error_smoothing  # for error statistics
-        self.beta_s = config.surprise_smoothing  # for surprise statistics
-        self.forgetting_rate = config.forgetting_rate
-        self.target_norm = config.target_norm
-
-        # Time step for continuous dynamics
-        self.dt = config.time_step
+        self.register_buffer('beta', torch.tensor(config.error_smoothing))
+        self.register_buffer('beta_s', torch.tensor(config.surprise_smoothing))
 
     def init_state(
         self,
@@ -141,213 +116,26 @@ class DREAMCell(nn.Module):
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None
     ) -> DREAMState:
-        """Initialize cell state."""
+        """
+        Initialize cell state.
+
+        Parameters
+        ----------
+        batch_size : int
+            Batch size
+        device : torch.device, optional
+            Device for tensors
+        dtype : torch.dtype, optional
+            Data type for tensors
+
+        Returns
+        -------
+        DREAMState
+            Initialized state
+        """
         return DREAMState.init_from_config(
             self.config, batch_size, device, dtype
         )
-
-    def compute_surprise(
-        self,
-        error: torch.Tensor,
-        state: DREAMState,
-        modulation_from_above: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
-        """
-        Compute surprise with adaptive threshold (Spec Section 3.2-3.3).
-
-        S_t = sigmoid((||e|| - τ) / γ)
-        τ = τ_0 * (1 + α * H)  where H = entropy from error variance
-
-        Uses relative error norm for better noise detection.
-
-        Parameters
-        ----------
-        error : torch.Tensor
-            Prediction error (batch, input_dim)
-        state : DREAMState
-            Current state containing error_var and adaptive_tau
-        modulation_from_above : torch.Tensor, optional
-            Top-down modulation vector from higher layer (batch, hidden_dim)
-
-        Returns
-        -------
-        torch.Tensor
-            Surprise values (batch,)
-        """
-        batch_size = error.shape[0]
-        eps = 1e-6
-
-        # Error norm (batch,)
-        error_norm = error.norm(dim=-1)
-
-        # Entropy from error variance (Spec 3.3)
-        # H = 0.5 * log(2πe * var)
-        variance = state.error_var.mean(dim=-1)  # (batch,)
-        entropy = 0.5 * torch.log(2 * torch.pi * torch.e * (variance + eps))
-        entropy = torch.clamp(entropy, 0.0, 2.0)
-
-        # Adaptive threshold (Spec 3.3)
-        # Use running mean of error norm as baseline for comparison
-        baseline_error = state.error_mean.norm(dim=-1) + eps
-
-        # Relative surprise: how much does current error exceed expected?
-        relative_error = error_norm / baseline_error
-
-        # Threshold based on entropy (uncertainty)
-        tau = 1.0 + self.alpha * entropy  # Base threshold around 1.0 (relative)
-
-        # Apply top-down modulation (COORDINATION)
-        if modulation_from_above is not None and self.use_coordination:
-            # Modulation reduces threshold (makes layer more sensitive)
-            modulation_strength = modulation_from_above.mean(dim=-1)  # (batch,)
-            tau = tau - self.kappa * modulation_strength
-
-        # Surprise using relative error
-        # gamma controls sensitivity: smaller = more sensitive
-        surprise = torch.sigmoid((relative_error - tau) / (self.gamma * 2))
-
-        return surprise, error_norm
-
-    def generate_modulation(self, h: torch.Tensor) -> torch.Tensor:
-        """
-        Generate top-down modulation vector for lower layer.
-
-        Parameters
-        ----------
-        h : torch.Tensor
-            Hidden state of current layer (batch, hidden_dim)
-
-        Returns
-        -------
-        torch.Tensor
-            Modulation vector (batch, hidden_dim) in range [0, 1]
-        """
-        if not self.use_coordination:
-            return torch.ones_like(h)  # No modulation
-
-        # Project and squash to [0, 1]
-        modulation = torch.sigmoid(h @ self.W_mod)
-        return modulation
-
-    def predict_lower_activity(self, h: torch.Tensor) -> torch.Tensor:
-        """
-        Predict lower layer's hidden state.
-
-        Parameters
-        ----------
-        h : torch.Tensor
-            Hidden state of current layer (batch, hidden_dim)
-
-        Returns
-        -------
-        torch.Tensor
-            Predicted lower layer activity (batch, hidden_dim)
-        """
-        if not self.use_coordination:
-            return h  # No prediction
-
-        # Project to lower layer space
-        prediction = h @ self.W_pred
-        return prediction
-
-    def compute_inter_layer_error(
-        self,
-        prediction: torch.Tensor,
-        actual: torch.Tensor
-    ) -> torch.Tensor:
-        """
-        Compute inter-layer prediction error.
-
-        Parameters
-        ----------
-        prediction : torch.Tensor
-            Predicted lower layer activity
-        actual : torch.Tensor
-            Actual lower layer activity
-
-        Returns
-        -------
-        torch.Tensor
-            Prediction error (batch, hidden_dim)
-        """
-        return actual - prediction
-
-    def update_fast_weights(
-        self,
-        h_prev: torch.Tensor,
-        error: torch.Tensor,
-        surprise: torch.Tensor,
-        state: DREAMState
-    ) -> None:
-        """
-        Update fast weights U via STDP (Spec Section 4.2).
-
-        dU = -λ * (U - U_target) + (η * S) * (h_prev ⊗ error) @ V
-
-        where ⊗ is outer product, @ is matrix multiplication.
-
-        If freeze_fast_weights is True, this is a no-op (static base training).
-        """
-        # SKIP UPDATE if frozen (static base training phase)
-        if self.freeze_fast_weights:
-            return
-
-        batch_size = h_prev.shape[0]
-
-        # Hebbian term: outer(h, e) @ V
-        # h: (batch, hidden), e: (batch, input), V: (input, rank)
-        # Result: (batch, hidden, rank)
-        eV = error @ self.V  # (batch, rank)
-        hebbian = state.h.unsqueeze(2) * eV.unsqueeze(1)  # (batch, hidden, rank)
-
-        # Plasticity modulation (eta * surprise)
-        plasticity = self.eta.unsqueeze(0) * surprise.unsqueeze(1)
-        plasticity = plasticity.unsqueeze(2)  # (batch, hidden, 1)
-
-        # Forgetting term (decay toward U_target)
-        forgetting = -self.forgetting_rate * (state.U - state.U_target)
-
-        # Full STDP update
-        dU = forgetting + plasticity * hebbian
-
-        # Euler integration
-        U_new = state.U + dU * self.dt
-
-        # Normalize to target norm (homeostasis)
-        U_norm = U_new.norm(dim=(1, 2), keepdim=True)
-        scale = (self.target_norm / (U_norm + 1e-6)).clamp(max=2.0)
-        state.U = U_new * scale
-
-    def compute_ltc_update(
-        self,
-        h_prev: torch.Tensor,
-        u_eff: torch.Tensor,
-        surprise: torch.Tensor
-    ) -> torch.Tensor:
-        """
-        Compute hidden state update with LTC (Spec Section 2.3).
-
-        dh/dt = (-h + tanh(u_eff)) / τ
-        τ = τ_sys / (1 + S * scale)
-
-        High surprise → small τ → fast updates
-        Low surprise → large τ → slow integration
-        """
-        if self.tau_sys.item() < 0.01:
-            # LTC disabled
-            return torch.tanh(u_eff)
-
-        # Dynamic time constant
-        tau = self.tau_sys / (1.0 + surprise * self.tau_surprise_scale)
-        tau = torch.clamp(tau, 0.01, 50.0)
-
-        # Euler integration
-        h_target = torch.tanh(u_eff)
-        dt_over_tau = self.dt / (tau.unsqueeze(1) + self.dt)
-        dt_over_tau = torch.clamp(dt_over_tau, 0.01, 0.5)
-
-        h_new = (1 - dt_over_tau) * h_prev + dt_over_tau * h_target
-        return h_new
 
     def forward(
         self,
@@ -355,100 +143,67 @@ class DREAMCell(nn.Module):
         state: DREAMState
     ) -> Tuple[torch.Tensor, DREAMState]:
         """
-        Forward pass of DREAM cell (Spec Section 6 step function).
+        Forward pass of DREAM cell.
 
-        1. Predictive Coding: x_hat = C^T @ h, e = x - x_hat
-        2. Surprise: S = sigmoid((||e|| - τ) / γ)
-        3. Fast Weights: U += -λ(U - U_target) + (η*S) * (h ⊗ e) @ V
-        4. Gain modulation: B_eff = (1 + κ*S) * B_base
-        5. State update: h_new = LTC(h, B_eff @ x) + W @ e
-        6. Sleep: if avg_surprise > S_min, update U_target
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input (batch, input_dim)
+        state : DREAMState
+            Current state
+
+        Returns
+        -------
+        h_new : torch.Tensor
+            New hidden state (batch, hidden_dim)
+        state : DREAMState
+            Updated state
         """
         batch_size = x.shape[0]
 
         # ================================================================
-        # 1. Predictive Coding (Spec 2.2)
+        # 1. Predictive Coding
         # ================================================================
-        # x_hat = C^T @ h  (C is hidden×input, so C^T @ h gives input,)
-        x_pred = torch.tanh(state.h @ self.C)  # (batch, input_dim)
-
-        # Error (innovation)
-        error = x - x_pred  # (batch, input_dim)
+        x_pred, error = self.predictive_coding(x, state.h)
 
         # ================================================================
-        # 2. Surprise Gate (Spec 3.2)
+        # 2. Surprise Gate
         # ================================================================
-        surprise, error_norm = self.compute_surprise(error, state)
-
-        # ================================================================
-        # 3. Fast Weights Update (Spec 4.2)
-        # ================================================================
-        # Hebbian term: outer(h, e) @ V
-        # h: (batch, hidden), e: (batch, input), V: (input, rank)
-        # Result: (batch, hidden, rank)
-
-        # Efficient computation: (h @ V.T @ e.T).T won't work directly
-        # Use einsum: outer[b,h,i] = h[b,h] * e[b,i]
-        # Then: update[b,h,r] = sum_i outer[b,h,i] * V[i,r]
-        # = sum_i h[b,h] * e[b,i] * V[i,r]
-        # = h[b,h] * sum_i e[b,i] * V[i,r]
-        # = h[b,h] * (e @ V)[b,r]
-        # So: update = h.unsqueeze(2) * (e @ V).unsqueeze(1)
-
-        eV = error @ self.V  # (batch, rank)
-        hebbian = state.h.unsqueeze(2) * eV.unsqueeze(1)  # (batch, hidden, rank)
-
-        # Plasticity modulation (Spec 4.2)
-        # eta is (hidden,), surprise is (batch,)
-        # eta * surprise: broadcast to (batch, hidden)
-        plasticity = self.eta.unsqueeze(0) * surprise.unsqueeze(1)  # (batch, hidden)
-        plasticity = plasticity.unsqueeze(2)  # (batch, hidden, 1)
-
-        # Forgetting term
-        forgetting = -self.forgetting_rate * (state.U - state.U_target)
-
-        # Full update (Spec 4.2)
-        dU = forgetting + plasticity * hebbian
-
-        # Euler integration
-        U_new = state.U + dU * self.dt
-
-        # Normalize to target norm (Spec 4.2 homeostasis)
-        U_norm = U_new.norm(dim=(1, 2), keepdim=True)
-        scale = (self.target_norm / (U_norm + 1e-6)).clamp(max=2.0)
-        U_new = U_new * scale
-
-        # Update state
-        state.U = U_new
+        surprise, error_norm, gain = self.surprise_gate(
+            error, state.error_var, state.error_mean
+        )
 
         # ================================================================
-        # 4. Gain Modulation (Spec 2.3, 4)
+        # 3. Fast Weights Update
         # ================================================================
-        # B_eff = (1 + κ * S) * B_base
-        gain = 1.0 + self.kappa * surprise.unsqueeze(1)  # (batch, 1)
-        # B_base: (input, hidden), x: (batch, input)
-        # x @ B_base: (batch, hidden)
-        base_effect = x @ self.B_base  # (batch, hidden)
-        u_eff = gain * base_effect  # (batch, hidden)
-
-        # Add fast weights contribution: U @ V.T
-        # U: (batch, hidden, rank), V: (input, rank)
-        # U @ V.T: (batch, hidden, input)
-        # Then @ x: (batch, hidden, input) @ (batch, input, 1) = (batch, hidden, 1)
-        fast_effect = torch.bmm(state.U, self.V.T.unsqueeze(0).expand(batch_size, -1, -1))  # (batch, hidden, input)
-        fast_effect = torch.bmm(fast_effect, x.unsqueeze(2)).squeeze(2)  # (batch, hidden)
-        u_eff = u_eff + fast_effect * 0.1  # Scale to prevent dominance
+        if self.use_fast_weights:
+            state.U = self.fast_weights.update(
+                state.h, error, surprise, state.U, state.U_target
+            )
 
         # ================================================================
-        # 5. State Update with LTC (Spec 2.3)
+        # 4. Effective Input Projection
         # ================================================================
-        h_ltc = self.compute_ltc_update(state.h, u_eff, surprise)
+        # Base projection with gain modulation
+        base_effect = self.predictive_coding.project_input(x)
+        u_eff = gain * base_effect
 
-        # Error injection (Spec 2.2, eq 3)
-        # h_new = h_ltc + W @ e
-        error_injection = error @ self.W  # (batch, hidden)
+        # Add fast weights contribution
+        if self.use_fast_weights:
+            fast_effect = self.fast_weights.compute_fast_effect(
+                state.U, self.fast_weights.V, x
+            )
+            u_eff = u_eff + fast_effect * 0.1
 
-        # Combine (Spec 6 pseudocode)
+        # ================================================================
+        # 5. State Update with LTC
+        # ================================================================
+        h_ltc = self.ltc(state.h, u_eff, surprise)
+
+        # Error injection
+        error_injection = self.predictive_coding.inject_error(error)
+
+        # Combine
         h_new = h_ltc + error_injection
 
         # Stability: mild leaky integration
@@ -462,19 +217,10 @@ class DREAMCell(nn.Module):
         state.avg_surprise = (1 - self.beta_s) * state.avg_surprise + self.beta_s * surprise
 
         # ================================================================
-        # 7. Sleep Consolidation (Spec 5.2)
+        # 7. Sleep Consolidation
         # ================================================================
-        avg_surprise_mean = state.avg_surprise.mean()
-
-        if avg_surprise_mean > self.S_min:
-            # Consolidate U into U_target
-            dU_target = self.sleep_rate * avg_surprise_mean * (state.U - state.U_target)
-            state.U_target = state.U_target + dU_target
-
-            # Homeostasis (Spec 5.2)
-            U_target_norm = state.U_target.norm(dim=(1, 2), keepdim=True)
-            scale = (self.target_norm / (U_target_norm + 1e-6)).clamp(max=2.0)
-            state.U_target = state.U_target * scale
+        if self.use_sleep:
+            state.U_target = self.sleep(state.U, state.U_target, state.avg_surprise)
 
         return h_new, state
 
@@ -484,7 +230,26 @@ class DREAMCell(nn.Module):
         state: Optional[DREAMState] = None,
         return_all: bool = False
     ) -> Tuple[torch.Tensor, DREAMState]:
-        """Process full sequence through cell."""
+        """
+        Process full sequence through cell.
+
+        Parameters
+        ----------
+        x_seq : torch.Tensor
+            Input sequence (batch, time, input_dim)
+        state : DREAMState, optional
+            Initial state
+        return_all : bool
+            If True, return all hidden states
+
+        Returns
+        -------
+        output : torch.Tensor
+            If return_all: (batch, time, hidden_dim)
+            Else: (batch, hidden_dim) - final state
+        state : DREAMState
+            Final state
+        """
         batch_size, time_steps, _ = x_seq.shape
 
         if state is None:
@@ -506,3 +271,27 @@ class DREAMCell(nn.Module):
             output = h
 
         return output, state
+
+    def set_fast_weights_mode(self, freeze: bool):
+        """
+        Set fast weights training mode.
+
+        Parameters
+        ----------
+        freeze : bool
+            True  = Static base training (fast weights frozen)
+            False = Adaptation/Inference (fast weights active)
+        """
+        self.freeze_fast_weights = freeze
+        self.fast_weights.freeze_fast_weights = freeze
+
+    def train(self, mode: bool = True):
+        """
+        Set training mode and auto-freeze fast weights.
+
+        Training (mode=True): fast weights FROZEN
+        Eval (mode=False): fast weights ACTIVE
+        """
+        super().train(mode)
+        self.set_fast_weights_mode(freeze=mode)
+        return self
