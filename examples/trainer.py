@@ -410,7 +410,8 @@ class ASRTrainer:
         val_loader: DataLoader,
         num_epochs: int,
         run_name: Optional[str] = None,
-        example_interval: int = 5
+        example_interval: int = 5,
+        show_train_examples: bool = True
     ):
         """
         Full training loop.
@@ -427,6 +428,8 @@ class ASRTrainer:
             Name for this run (for logging)
         example_interval : int
             Show prediction examples every N epochs (default: 5)
+        show_train_examples : bool
+            Show examples from both train and val (default: True)
         """
         if run_name is None:
             run_name = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -458,9 +461,16 @@ class ASRTrainer:
             show_examples = ((epoch + 1) % example_interval == 0) or (epoch + 1 == num_epochs)
             
             if show_examples:
-                val_metrics, examples = self.validate(val_loader, return_examples=True)
+                # Get validation examples
+                val_metrics, val_examples = self.validate(val_loader, return_examples=True)
+                
+                # Get train examples if requested
+                train_examples = None
+                if show_train_examples:
+                    _, train_examples = self.validate(train_loader, return_examples=True, num_examples=3)
             else:
                 val_metrics = self.validate(val_loader, return_examples=False)
+                train_examples = None
             
             # Update scheduler
             current_lr = self.optimizer.param_groups[0]['lr']
@@ -486,22 +496,33 @@ class ASRTrainer:
             print(f"LR: {current_lr:.2e}")
             
             # Print examples
-            if show_examples and examples:
+            if show_examples:
                 print(f"\n{'='*60}")
                 print(f"Prediction Examples (Epoch {epoch+1}):")
                 print(f"{'='*60}")
                 
-                for i, (true_text, pred_text, confidence) in enumerate(examples, 1):
-                    # Clean up text for display
-                    true_display = true_text.replace('\n', '\\n')[:60]
-                    pred_display = pred_text.replace('\n', '\\n')[:60]
-                    
-                    # Color coding based on match
+                # Print train examples first
+                if train_examples:
+                    print(f"\n  TRAIN SET:")
+                    for i, (true_text, pred_text, confidence) in enumerate(train_examples, 1):
+                        true_display = true_text.replace('\n', '\\n')[:50]
+                        pred_display = pred_text.replace('\n', '\\n')[:50]
+                        match = "✓" if true_text.strip() == pred_text.strip() else "✗"
+                        
+                        print(f"    {match} Ex.{i} (conf: {confidence:.2f}):")
+                        print(f"       True: '{true_display}'")
+                        print(f"       Pred: '{pred_display}'")
+                
+                # Print validation examples
+                print(f"\n  VALIDATION SET:")
+                for i, (true_text, pred_text, confidence) in enumerate(val_examples, 1):
+                    true_display = true_text.replace('\n', '\\n')[:50]
+                    pred_display = pred_text.replace('\n', '\\n')[:50]
                     match = "✓" if true_text.strip() == pred_text.strip() else "✗"
                     
-                    print(f"\n  {match} Example {i} (conf: {confidence:.2f}):")
-                    print(f"    True:  '{true_display}'")
-                    print(f"    Pred:  '{pred_display}'")
+                    print(f"    {match} Ex.{i} (conf: {confidence:.2f}):")
+                    print(f"       True: '{true_display}'")
+                    print(f"       Pred: '{pred_display}'")
                 
                 print(f"\n{'='*60}")
             

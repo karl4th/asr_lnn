@@ -131,6 +131,8 @@ def parse_args():
                         help="Log every N batches (default: 10)")
     parser.add_argument("--example-interval", type=int, default=5,
                         help="Show prediction examples every N epochs (default: 5)")
+    parser.add_argument("--no-train-examples", action="store_true",
+                        help="Don't show training set examples (only validation)")
     
     # =====================================================================
     # Reproducibility
@@ -239,7 +241,8 @@ def main():
         val_loader=val_loader,
         num_epochs=args.epochs,
         run_name=args.run_name,
-        example_interval=args.example_interval
+        example_interval=args.example_interval,
+        show_train_examples=not args.no_train_examples
     )
     
     # Save final model
