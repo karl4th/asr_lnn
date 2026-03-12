@@ -477,13 +477,13 @@ class ASRTrainer:
             self.scheduler.step(val_metrics['loss'])
             
             # Log metrics
-            self.log_data['train_loss'].append(train_metrics['loss'])
-            self.log_data['val_loss'].append(val_metrics['loss'])
-            self.log_data['train_ctc_loss'].append(train_metrics['ctc_loss'])
-            self.log_data['val_ctc_loss'].append(val_metrics['ctc_loss'])
-            self.log_data['train_aux_loss'].append(train_metrics['aux_loss'])
-            self.log_data['learning_rate'].append(current_lr)
-            self.log_data['epoch_time'].append(train_metrics['epoch_time'])
+            self.log_data['train_loss'].append(float(train_metrics['loss']))
+            self.log_data['val_loss'].append(float(val_metrics['loss']))
+            self.log_data['train_ctc_loss'].append(float(train_metrics['ctc_loss']))
+            self.log_data['val_ctc_loss'].append(float(val_metrics['ctc_loss']))
+            self.log_data['train_aux_loss'].append(float(train_metrics['aux_loss']))
+            self.log_data['learning_rate'].append(float(current_lr))
+            self.log_data['epoch_time'].append(float(train_metrics['epoch_time']))
             
             # Print summary
             print(f"\nTrain Loss: {train_metrics['loss']:.4f} | "
