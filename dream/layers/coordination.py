@@ -421,7 +421,8 @@ class CoordinatedDREAMStack(nn.Module):
         self,
         x: torch.Tensor,
         states: Optional[CoordinatedState] = None,
-        return_losses: bool = False
+        return_losses: bool = False,
+        return_sequence: bool = True
     ) -> Tuple[torch.Tensor, CoordinatedState, Optional[Dict]]:
         """
         Forward pass through coordinated stack.
@@ -429,6 +430,27 @@ class CoordinatedDREAMStack(nn.Module):
         Processing:
         - Bottom-up: process input through layers
         - Top-down modulation from previous timestep
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input (batch, time, input_dim)
+        states : CoordinatedState, optional
+            Coordinated states
+        return_losses : bool
+            Return inter-layer and reconstruction losses
+        return_sequence : bool
+            Return full sequence (batch, time, hidden_dim) or just last output
+
+        Returns
+        -------
+        output : torch.Tensor
+            If return_sequence=True: (batch, time, input_dim)
+            Else: (batch, input_dim)
+        states : CoordinatedState
+            Updated states
+        losses : dict, optional
+            Prediction losses
         """
         batch_size, time_steps, _ = x.shape
         device = x.device
@@ -437,6 +459,10 @@ class CoordinatedDREAMStack(nn.Module):
             states = self.init_states(batch_size, device)
 
         losses = {'reconstruction': 0.0, 'inter_layer': 0.0} if return_losses else None
+
+        # Store outputs for sequence return
+        if return_sequence:
+            all_outputs = []
 
         for t in range(time_steps):
             x_t = x[:, t, :]
@@ -468,12 +494,22 @@ class CoordinatedDREAMStack(nn.Module):
                     if self.dropout is not None:
                         current_input = self.dropout(current_input)
 
+            # Store output for this timestep
+            if return_sequence:
+                all_outputs.append(layer_outputs[-1].unsqueeze(1))
+
             if return_losses:
                 recon = self.output_projection(layer_outputs[-1])
                 losses['reconstruction'] = F.mse_loss(recon, x_t)
 
-        final_output = layer_outputs[-1]
-        output = self.output_projection(final_output)
+        # Concatenate outputs along time dimension
+        if return_sequence:
+            output = torch.cat(all_outputs, dim=1)  # (batch, time, hidden_dim)
+            # Project to input_dim for reconstruction loss compatibility
+            output = self.output_projection(output)
+        else:
+            final_output = layer_outputs[-1]
+            output = self.output_projection(final_output)
 
         return output, states, losses
 

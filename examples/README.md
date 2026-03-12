@@ -1,234 +1,277 @@
-# DREAM Examples
+# DREAM ASR Training Scripts
 
-Practical examples showing how to use DREAM (Dynamic Recall and Elastic Adaptive Memory).
+Training scripts for Automatic Speech Recognition using DREAM (Dynamic Recall and Elastic Adaptive Memory).
 
 ## Quick Start
 
+### Basic Training (Standard DREAM)
+
 ```bash
-# Run any example
-python examples/01_basic_usage.py
-python examples/02_stateful_processing.py
-python examples/03_online_adaptation.py
-python examples/04_training.py
-python examples/05_long_sequences.py
+python examples/train.py \
+    --root /content/drive/MyDrive/dream/dataset/ljspeech \
+    --log-dir /content/drive/MyDrive/dream/experiments/dream_base \
+    --epochs 50 \
+    --batch-size 16
 ```
 
-## Examples Overview
+### Coordinated DREAM (with top-down modulation)
 
-### 1. Basic Usage (`01_basic_usage.py`)
-
-Get started with DREAM in 5 minutes.
-
-**Covers:**
-- High-level API (`DREAM` class)
-- Low-level API (`DREAMCell`)
-- Static base training vs inference
-- Fast weights freezing/unfreezing
-
-**Run:**
 ```bash
-python examples/01_basic_usage.py
+python examples/train.py \
+    --root /content/drive/MyDrive/dream/dataset/ljspeech \
+    --model coordinated \
+    --log-dir /content/drive/MyDrive/dream/experiments/dream_coordinated \
+    --epochs 50
 ```
 
----
+### Quick Experiment (Subset Mode)
 
-### 2. Stateful Processing (`02_stateful_processing.py`)
-
-Preserve memory across multiple sequences.
-
-**Covers:**
-- State initialization and preservation
-- Stateful vs stateless processing
-- Long document chunking
-- Multi-turn conversations
-
-**Run:**
 ```bash
-python examples/02_stateful_processing.py
+python examples/train.py \
+    --root /content/drive/MyDrive/dream/dataset/ljspeech \
+    --subset 100 \
+    --log-dir /content/drive/MyDrive/dream/experiments/dream_quick \
+    --epochs 10
 ```
 
----
+## Parallel Training (Compare Models)
 
-### 3. Online Adaptation (`03_online_adaptation.py`)
+Run both models simultaneously to compare:
 
-Adapt during inference without gradient updates.
-
-**Covers:**
-- Speaker/pattern adaptation
-- DREAM vs LSTM comparison
-- Real-time personalization
-- Fast weights dynamics
-
-**Run:**
 ```bash
-python examples/03_online_adaptation.py
+# Terminal 1: Standard DREAM
+python examples/train.py \
+    --root /content/drive/MyDrive/dream/dataset/ljspeech \
+    --model dream \
+    --run-name dream_base \
+    --log-dir /content/drive/MyDrive/dream/experiments &
+
+# Terminal 2: Coordinated DREAM
+python examples/train.py \
+    --root /content/drive/MyDrive/dream/dataset/ljspeech \
+    --model coordinated \
+    --run-name dream_coordinated \
+    --log-dir /content/drive/MyDrive/dream/experiments &
 ```
 
----
+## Ablation Studies
 
-### 4. Training (`04_training.py`)
+### Disable Fast Weights
 
-Complete training guide with two-phase approach.
-
-**Covers:**
-- Static base training (fast weights frozen)
-- Adaptation phase (fast weights active)
-- Manual mode switching
-- Multi-epoch training with state persistence
-
-**Run:**
 ```bash
-python examples/04_training.py
+python examples/train.py \
+    --root /content/drive/MyDrive/dream/dataset/ljspeech \
+    --no-fast-weights \
+    --log-dir /content/drive/MyDrive/dream/experiments/dream_no_fw
 ```
 
----
+### Disable LTC (Liquid Time-Constants)
 
-### 5. Long Sequences (`05_long_sequences.py`)
-
-Process sequences longer than memory capacity.
-
-**Covers:**
-- Truncated BPTT
-- Variable length sequences
-- Streaming processing
-- Memory efficiency
-
-**Run:**
 ```bash
-python examples/05_long_sequences.py
+python examples/train.py \
+    --root /content/drive/MyDrive/dream/dataset/ljspeech \
+    --no-ltc \
+    --log-dir /content/drive/MyDrive/dream/experiments/dream_no_ltc
 ```
 
----
+### Disable Sleep Consolidation
 
-## Key Concepts
-
-### Static Base Training vs Online Adaptation
-
-```python
-# Training: Fast weights FROZEN
-model.train()  # or model.set_fast_weights_mode(freeze=True)
-# Only slow weights (C, W, B, eta) learn via backprop
-
-# Inference: Fast weights ACTIVE
-model.eval()  # or model.set_fast_weights_mode(freeze=False)
-# Fast weights adapt online via STDP
+```bash
+python examples/train.py \
+    --root /content/drive/MyDrive/dream/dataset/ljspeech \
+    --no-sleep \
+    --log-dir /content/drive/MyDrive/dream/experiments/dream_no_sleep
 ```
 
-### Stateful Processing
+### Freeze Fast Weights (Static Base Training)
 
-```python
-# Initialize state ONCE
-state = model.init_state(batch_size=4)
-
-# Preserve across sequences
-for seq in sequences:
-    output, state = model(seq, state=state)  # State preserved!
+```bash
+python examples/train.py \
+    --root /content/drive/MyDrive/dream/dataset/ljspeech \
+    --freeze-fast-weights \
+    --log-dir /content/drive/MyDrive/dream/experiments/dream_static
 ```
 
-### Truncated BPTT
+## All Command-Line Arguments
 
-```python
-state = model.init_state(batch_size)
+### Data Parameters
 
-for start in range(0, seq_len, segment_size):
-    segment = x[:, start:start+segment_size, :]
-    output, state = model.forward_sequence(segment, state=state)
-    loss.backward()
-    state = state.detach()  # Truncate BPTT!
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--root` | (required) | Path to LJSpeech directory |
+| `--subset` | None | Limit to N samples (quick experiments) |
+| `--batch-size` | 16 | Batch size |
+| `--num-workers` | 4 | Data loading workers |
+| `--val-split` | 0.1 | Validation split fraction |
+
+### Model Parameters
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--model` | dream | `dream` or `coordinated` |
+| `--hidden-dims` | [256, 256, 256] | Hidden dimensions per layer |
+| `--rank` | 16 | Fast weights rank |
+| `--dropout` | 0.1 | Dropout rate |
+
+### Block Control Flags
+
+| Flag | Effect |
+|------|--------|
+| `--no-fast-weights` | Disable fast weights |
+| `--no-ltc` | Disable Liquid Time-Constants |
+| `--no-sleep` | Disable sleep consolidation |
+| `--freeze-fast-weights` | Freeze fast weights during training |
+| `--no-hierarchical-tau` | Disable hierarchical tau (coordinated only) |
+| `--no-inter-layer-prediction` | Disable inter-layer loss (coordinated only) |
+
+### Training Parameters
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--epochs` | 50 | Number of epochs |
+| `--lr` | 1e-3 | Learning rate |
+| `--weight-decay` | 1e-5 | Weight decay |
+| `--grad-clip` | 5.0 | Gradient clipping |
+| `--use-amp` | False | Use automatic mixed precision |
+
+### Logging
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--log-dir` | ./logs | Directory for logs/checkpoints |
+| `--run-name` | auto | Name for this run |
+| `--log-interval` | 10 | Log every N batches |
+
+### Reproducibility
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--seed` | 42 | Random seed |
+
+## Output Structure
+
+```
+/content/drive/MyDrive/dream/experiments/
+└── dream_base_20260312_143022/
+    ├── best.pt              # Best model (lowest val loss)
+    ├── epoch_5.pt           # Checkpoint every 5 epochs
+    ├── epoch_10.pt
+    ├── ...
+    ├── final.pt             # Final model
+    └── metrics.json         # Training metrics (loss, time, LR)
 ```
 
----
+## Metrics Format (metrics.json)
 
-## Common Patterns
-
-### Pattern 1: Basic Sequence Processing
-
-```python
-from dream import DREAM
-
-model = DREAM(input_dim=64, hidden_dim=128, rank=8)
-x = torch.randn(4, 50, 64)
-output, state = model(x)
+```json
+{
+  "train_loss": [2.5, 2.1, 1.8, ...],
+  "val_loss": [2.6, 2.2, 1.9, ...],
+  "train_ctc_loss": [2.3, 1.9, 1.6, ...],
+  "val_ctc_loss": [2.4, 2.0, 1.7, ...],
+  "train_aux_loss": [0.02, 0.01, ...],
+  "learning_rate": [0.001, 0.001, 0.0005, ...],
+  "epoch_time": [120.5, 118.2, ...]
+}
 ```
 
-### Pattern 2: Multi-Epoch Training
+## Model Architecture
 
-```python
-from dream import DREAMCell
+### Standard DREAM ASR
 
-model = DREAMCell(config)
-state = model.init_state(batch_size)
-
-for epoch in range(100):
-    output, state = model.forward_sequence(x, state=state)
-    loss.backward()
-    optimizer.step()
-    state = state.detach()
+```
+Audio (16kHz) → Mel Spectrogram (80 bins) → DREAM Stack (3×256) → Linear(27) → CTC Loss
 ```
 
-### Pattern 3: Online Adaptation
+### Coordinated DREAM ASR
 
-```python
-model.eval()  # Unfreeze fast weights
-state = model.init_state(batch_size)
-
-for seq in sequences:
-    output, state = model(seq, state=state)
-    # Fast weights adapt to each sequence!
+```
+Audio (16kHz) → Mel Spectrogram (80 bins) → Coordinated DREAM Stack (3×256) → Linear(27) → CTC Loss
+                                        ↓
+                            Top-down modulation + Inter-layer prediction loss
 ```
 
----
+## Output Classes
 
-## Troubleshooting
+27 classes: 26 letters (a-z) + space
+
+- CTC blank token: index 0 (automatic)
+- Space: index 1
+- Letters a-z: indices 2-27
+
+## Audio Preprocessing
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `sample_rate` | 16000 Hz | Resampled from 22050 Hz |
+| `n_mels` | 80 | Mel frequency bins |
+| `hop_length` | 160 | 10ms at 16kHz |
+| `n_fft` | 512 | 32ms window |
+| `window` | hann | Hann window |
+
+## Typical Training Times
+
+| Dataset Size | Epochs | T4 GPU | A100 GPU |
+|--------------|--------|--------|----------|
+| Full (13100) | 50 | ~8 hours | ~3 hours |
+| Subset (100) | 10 | ~5 minutes | ~2 minutes |
+| Subset (1000) | 20 | ~30 minutes | ~10 minutes |
+
+## Debugging Tips
+
+### Enable Debug Mode
+
+```bash
+python examples/train.py \
+    --root /content/drive/MyDrive/dream/dataset/ljspeech \
+    --subset 10 \
+    --debug \
+    --log-interval 1
+```
+
+### Check Data Loading
+
+```bash
+python examples/dataset.py --root /content/drive/MyDrive/dream/dataset/ljspeech --subset 5
+```
+
+### Test Model Forward Pass
+
+```bash
+python examples/model.py --model dream
+python examples/model.py --model coordinated
+```
+
+## Common Issues
 
 ### CUDA Out of Memory
 
-Use truncated BPTT with smaller segments:
-
-```python
-segment_size = 50  # Reduce from 100
+Reduce batch size:
+```bash
+--batch-size 8  # or 4
 ```
 
 ### Slow Training
 
-Ensure fast weights are frozen during training:
+- Use `--use-amp` for mixed precision (2-3x faster on T4)
+- Increase `--num-workers` if CPU is bottleneck
+- Use `--subset` for quick prototyping
 
-```python
-model.train()  # Auto-freezes fast weights
-# or
-model.set_fast_weights_mode(freeze=True)
-```
+### NaN Loss
 
-### Model Forgets Between Sequences
-
-Preserve state:
-
-```python
-state = model.init_state(batch_size)
-for seq in sequences:
-    output, state = model(seq, state=state)  # Pass state!
-```
-
----
-
-## Next Steps
-
-After running these examples:
-
-1. **Read Documentation**: `docs/COMPLETE_GUIDE.md`
-2. **Try ASR Training**: `train_asr.py` (for speech recognition)
-3. **Run Benchmarks**: `tests/benchmarks/run_all.py`
-
----
+- Reduce learning rate: `--lr 1e-4`
+- Enable gradient clipping: `--grad-clip 1.0`
+- Check for corrupted audio files in dataset
 
 ## Citation
+
+If you use this code, please cite:
 
 ```bibtex
 @software{dream2026,
   title = {DREAM: Dynamic Recall and Elastic Adaptive Memory},
-  author = {Manifestro Team},
+  author = {Your Name},
   year = {2026},
-  url = {https://github.com/karl4th/dream-nn},
-  version = "0.1.2"
+  version = {0.2.1}
 }
 ```
