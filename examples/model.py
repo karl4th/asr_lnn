@@ -77,7 +77,8 @@ class DREAMASR(nn.Module):
             freeze_fast_weights=freeze_fast_weights
         )
         
-        # Output projection
+        # Output projection with LayerNorm
+        self.output_norm = nn.LayerNorm(hidden_dims[-1])
         self.output_proj = nn.Linear(hidden_dims[-1], num_classes)
         
         # Log softmax for CTC
@@ -115,7 +116,8 @@ class DREAMASR(nn.Module):
         # DREAM Stack
         output, states = self.dream(mel_spec)
         
-        # Output projection
+        # Output projection with LayerNorm
+        output = self.output_norm(output)
         output = self.output_proj(output)
         
         # Log softmax

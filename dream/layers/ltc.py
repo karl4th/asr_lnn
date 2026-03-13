@@ -44,6 +44,9 @@ class LiquidTimeConstants(nn.Module):
 
         self.tau_sys = nn.Parameter(torch.tensor(ltc_tau_sys))
         self.tau_surprise_scale = nn.Parameter(torch.tensor(ltc_surprise_scale))
+        
+        # LayerNorm for hidden state stability
+        self.layer_norm = nn.LayerNorm(1)  # Normalize over hidden dim
 
     def forward(
         self,
@@ -69,21 +72,24 @@ class LiquidTimeConstants(nn.Module):
             Updated hidden state
         """
         if not self.ltc_enabled or self.tau_sys.item() < 0.01:
-            # Classic update (no LTC)
-            return torch.tanh(u_eff)
+            # Classic update with LayerNorm (no LTC)
+            return self.layer_norm(torch.tanh(u_eff))
+
+        # Normalize hidden state for stability
+        h_prev_norm = self.layer_norm(h_prev)
 
         # Dynamic time constant
         tau = self.tau_sys / (1.0 + surprise * self.tau_surprise_scale)
-        tau = torch.clamp(tau, 0.01, 50.0)
+        tau = torch.clamp(tau, 0.1, 50.0)  # Increased min tau for better gradient flow
 
         # Target state
         h_target = torch.tanh(u_eff)
 
         # Euler integration: dh/dt = (-h + h_target) / τ
         dt_over_tau = self.time_step / (tau.unsqueeze(1) + self.time_step)
-        dt_over_tau = torch.clamp(dt_over_tau, 0.01, 0.5)
+        dt_over_tau = torch.clamp(dt_over_tau, 0.05, 0.5)  # Better gradient flow
 
         # Interpolate between current and target
-        h_new = (1 - dt_over_tau) * h_prev + dt_over_tau * h_target
+        h_new = (1 - dt_over_tau) * h_prev_norm + dt_over_tau * h_target
 
         return h_new

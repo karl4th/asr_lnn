@@ -497,6 +497,8 @@ class ASRTrainer:
             
             # Print examples
             if show_examples:
+                examples_log = []
+                
                 print(f"\n{'='*60}")
                 print(f"Prediction Examples (Epoch {epoch+1}):")
                 print(f"{'='*60}")
@@ -504,6 +506,7 @@ class ASRTrainer:
                 # Print train examples first
                 if train_examples:
                     print(f"\n  TRAIN SET:")
+                    train_log = []
                     for i, (true_text, pred_text, confidence) in enumerate(train_examples, 1):
                         true_display = true_text.replace('\n', '\\n')[:50]
                         pred_display = pred_text.replace('\n', '\\n')[:50]
@@ -512,9 +515,18 @@ class ASRTrainer:
                         print(f"    {match} Ex.{i} (conf: {confidence:.2f}):")
                         print(f"       True: '{true_display}'")
                         print(f"       Pred: '{pred_display}'")
+                        
+                        train_log.append({
+                            'true': true_text,
+                            'pred': pred_text,
+                            'confidence': float(confidence),
+                            'match': true_text.strip() == pred_text.strip()
+                        })
+                    examples_log.append({'train': train_log})
                 
                 # Print validation examples
                 print(f"\n  VALIDATION SET:")
+                val_log = []
                 for i, (true_text, pred_text, confidence) in enumerate(val_examples, 1):
                     true_display = true_text.replace('\n', '\\n')[:50]
                     pred_display = pred_text.replace('\n', '\\n')[:50]
@@ -523,8 +535,21 @@ class ASRTrainer:
                     print(f"    {match} Ex.{i} (conf: {confidence:.2f}):")
                     print(f"       True: '{true_display}'")
                     print(f"       Pred: '{pred_display}'")
+                    
+                    val_log.append({
+                        'true': true_text,
+                        'pred': pred_text,
+                        'confidence': float(confidence),
+                        'match': true_text.strip() == pred_text.strip()
+                    })
+                examples_log.append({'val': val_log})
                 
                 print(f"\n{'='*60}")
+                
+                # Save examples to separate file
+                examples_path = os.path.join(run_dir, f'examples_epoch_{epoch+1}.json')
+                with open(examples_path, 'w') as f:
+                    json.dump({'epoch': epoch+1, 'examples': examples_log}, f, indent=2)
             
             # Save best model
             if val_metrics['loss'] < self.best_val_loss:

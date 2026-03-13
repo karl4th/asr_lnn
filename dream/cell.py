@@ -203,11 +203,12 @@ class DREAMCell(nn.Module):
         # Error injection
         error_injection = self.predictive_coding.inject_error(error)
 
-        # Combine
+        # Combine with skip connection
         h_new = h_ltc + error_injection
 
-        # Stability: mild leaky integration
-        h_new = h_new * 0.99 + state.h * 0.01
+        # Stability: LayerNorm + mild leaky integration
+        h_new = self.ltc.layer_norm(h_new) if hasattr(self.ltc, 'layer_norm') else h_new
+        h_new = h_new * 0.95 + state.h * 0.05  # More skip connection
 
         # ================================================================
         # 6. Update Statistics
